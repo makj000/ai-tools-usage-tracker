@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Tracker</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #d97706;
+    --green: #3fb950;
+    --blue: #58a6ff;
+    --purple: #bc8cff;
+    --red: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace; font-size: 14px; }
+
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 16px; font-weight: 600; color: var(--accent); }
+  header .subtitle { color: var(--muted); font-size: 12px; }
+  .header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .total-cost { font-size: 15px; font-weight: 700; color: var(--green); }
+
+  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font-size: 12px; }
+  .btn:hover { background: var(--border); }
+
+  .layout { display: grid; grid-template-columns: 280px 1fr; height: calc(100vh - 53px); }
+  .sidebar { background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; }
+  .main { overflow-y: auto; padding: 20px; }
+
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 16px; }
+  .stat { background: var(--surface); padding: 14px; }
+  .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+  .stat .value { font-size: 22px; font-weight: 700; color: var(--text); }
+  .stat .value.green { color: var(--green); }
+  .stat .value.blue { color: var(--blue); }
+  .stat .value.purple { color: var(--purple); }
+  .stat .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .section-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 12px 16px 6px; }
+
+  .session-item { padding: 10px 16px; cursor: pointer; border-bottom: 1px solid var(--border); transition: background 0.1s; }
+  .session-item:hover, .session-item.active { background: rgba(255,255,255,0.04); }
+  .session-item .project { font-size: 11px; color: var(--blue); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .session-item .preview { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .session-item .meta { font-size: 11px; color: var(--muted); margin-top: 3px; display: flex; justify-content: space-between; }
+  .session-item .cost-badge { color: var(--green); font-weight: 600; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .card h3 { font-size: 13px; margin-bottom: 12px; color: var(--accent); }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .row:last-child { border-bottom: none; }
+  .row .key { color: var(--muted); font-size: 12px; }
+  .row .val { font-weight: 600; }
+  .val.green { color: var(--green); }
+  .val.red { color: var(--red); }
+  .val.blue { color: var(--blue); }
+  .val.purple { color: var(--purple); }
+
+  .chart-wrap { margin-bottom: 16px; }
+  .chart-wrap h3 { font-size: 12px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .chart { display: flex; align-items: flex-end; gap: 3px; height: 60px; }
+  .bar-col { display: flex; flex-direction: column; align-items: center; flex: 1; }
+  .bar { background: var(--accent); opacity: 0.7; width: 100%; border-radius: 2px 2px 0 0; min-height: 1px; transition: opacity 0.2s; cursor: pointer; }
+  .bar.green { background: var(--green); }
+  .bar:hover { opacity: 1; }
+  .bar-label { font-size: 9px; color: var(--muted); margin-top: 3px; }
+
+  .feed { display: flex; flex-direction: column; gap: 8px; }
+  .feed-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .feed-item .prompt-text { font-size: 13px; line-height: 1.5; }
+  .feed-item .prompt-meta { font-size: 11px; color: var(--muted); margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .feed-item .project { color: var(--blue); }
+  .tag { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+  .tag.tool { background: rgba(88, 166, 255, 0.15); color: var(--blue); }
+  .tag.bash { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+  .tag.edit { background: rgba(188, 140, 255, 0.15); color: var(--purple); }
+
+  .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-bottom: 16px; }
+  .tool-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+  .tool-card .tool-name { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+  .tool-card .tool-count { font-size: 20px; font-weight: 700; color: var(--accent); }
+
+  .project-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .project-row:last-child { border-bottom: none; }
+  .project-bar-bg { flex: 1; background: var(--border); border-radius: 2px; height: 6px; overflow: hidden; }
+  .project-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
+  .project-name { font-size: 12px; color: var(--blue); width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+  .project-cost { font-size: 12px; font-weight: 600; color: var(--green); width: 60px; text-align: right; flex-shrink: 0; }
+
+  .token-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .token-box { background: var(--bg); border-radius: 6px; padding: 10px 12px; }
+  .token-box .tval { font-size: 16px; font-weight: 700; }
+  .token-box .tlabel { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .no-data { color: var(--muted); font-size: 13px; padding: 40px; text-align: center; }
+
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .tab { padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; transition: color 0.1s; }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab:hover { color: var(--text); }
+
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Claude Tracker</h1>
+  <span class="subtitle">Commands &amp; Token Usage</span>
+  <div class="header-actions">
+    <span id="totalCostHeader" class="total-cost"></span>
+    <span style="font-size:10px;color:var(--muted)">equiv. API cost</span>
+    <button class="btn" onclick="refresh()">Refresh</button>
+  </div>
+</header>
+
+<div class="layout">
+  <div class="sidebar" id="sidebar">
+    <div class="section-title">Sessions (by equiv. cost)</div>
+    <div id="sessionList"><div class="no-data">Loading...</div></div>
+  </div>
+  <div class="main">
+    <div class="tabs">
+      <div class="tab active" onclick="showTab('overview')">Overview</div>
+      <div class="tab" onclick="showTab('cost')">Token Usage</div>
+      <div class="tab" onclick="showTab('feed')">Command Feed</div>
+      <div class="tab" onclick="showTab('tools')">Tool Usage</div>
+    </div>
+    <div id="tabContent"></div>
+  </div>
+</div>
+
+<script>
+let state = { stats: null, tokens: null, history: [], events: [], activeTab: 'overview' };
+
+async function loadAll() {
+  const [statsR, tokensR, histR, eventsR] = await Promise.all([
+    fetch('/api/stats').then(r => r.json()),
+    fetch('/api/tokens').then(r => r.json()),
+    fetch('/api/history').then(r => r.json()),
+    fetch('/api/events').then(r => r.json()),
+  ]);
+  state.stats = statsR;
+  state.tokens = tokensR;
+  state.history = histR;
+  state.events = eventsR;
+
+  const totalCost = tokensR?.totals?.cost || 0;
+  document.getElementById('totalCostHeader').textContent = `$${totalCost.toFixed(2)}`;
+
+  renderSidebar();
+  renderTab(state.activeTab);
+}
+
+function refresh() { loadAll(); }
+
+function showTab(name) {
+  state.activeTab = name;
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    const tabs = ['overview', 'cost', 'feed', 'tools'];
+    t.classList.toggle('active', tabs[i] === name);
+  });
+  renderTab(name);
+}
+
+function renderTab(name) {
+  if (name === 'overview') renderOverview();
+  else if (name === 'cost') renderCost();
+  else if (name === 'feed') renderFeed();
+  else if (name === 'tools') renderTools();
+}
+
+function renderSidebar() {
+  const sessions = (state.tokens?.sessions || []).slice(0, 60);
+  if (!sessions.length) {
+    document.getElementById('sessionList').innerHTML = '<div class="no-data">No sessions yet</div>';
+    return;
+  }
+  document.getElementById('sessionList').innerHTML = sessions.map(s => {
+    const when = s.lastTs ? formatRelative(new Date(s.lastTs)) : '—';
+    const proj = (s.project || '').split('/').slice(-2).join('/');
+    const cost = s.cost || 0;
+    return `<div class="session-item">
+      <div class="project">${proj || s.project}</div>
+      <div class="preview">${s.sessionId.slice(0, 8)}… · ${s.counts?.messages || 0} turns</div>
+      <div class="meta"><span class="cost-badge">$${cost.toFixed(4)}</span><span>${when}</span></div>
+    </div>`;
+  }).join('');
+}
+
+function renderOverview() {
+  const s = state.stats;
+  const t = state.tokens;
+  if (!s || !t) { document.getElementById('tabContent').innerHTML = '<div class="no-data">Loading...</div>'; return; }
+
+  const totals = t.totals || {};
+  const totalCost = totals.cost || 0;
+
+  // Activity chart — last 14 days (prompts)
+  const days = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  const maxPrompts = Math.max(1, ...days.map(d => s.perDay[d] || 0));
+  const activityBars = days.map(d => {
+    const count = s.perDay[d] || 0;
+    const h = Math.max(1, Math.round((count / maxPrompts) * 56));
+    return `<div class="bar-col" title="${d}: ${count} prompts">
+      <div class="bar" style="height:${h}px"></div>
+      <div class="bar-label">${d.slice(5).replace('-', '/')}</div>
+    </div>`;
+  }).join('');
+
+  // Cost chart — last 14 days
+  const perDay = t.perDay || {};
+  const maxCost = Math.max(0.0001, ...days.map(d => (perDay[d]?.cost || 0)));
+  const costBars = days.map(d => {
+    const cost = perDay[d]?.cost || 0;
+    const h = Math.max(1, Math.round((cost / maxCost) * 56));
+    return `<div class="bar-col" title="${d}: $${cost.toFixed(4)}">
+      <div class="bar green" style="height:${h}px"></div>
+      <div class="bar-label">${d.slice(5).replace('-', '/')}</div>
+    </div>`;
+  }).join('');
+
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayCost = perDay[todayKey]?.cost || 0;
+
+  document.getElementById('tabContent').innerHTML = `
+    <div class="stat-grid">
+      <div class="stat"><div class="label">Equiv. API Cost</div><div class="value green">$${totalCost.toFixed(2)}</div><div class="sub">all sessions · subscription user</div></div>
+      <div class="stat"><div class="label">Today (equiv.)</div><div class="value green">$${todayCost.toFixed(4)}</div><div class="sub">${s.perDay[todayKey] || 0} prompts</div></div>
+      <div class="stat"><div class="label">Output Tokens</div><div class="value blue">${fmtNum(totals.output_tokens)}</div><div class="sub">${fmtNum(totals.messages)} turns</div></div>
+      <div class="stat"><div class="label">Cache Reads</div><div class="value purple">${fmtNum(totals.cache_read_input_tokens)}</div><div class="sub">${fmtNum(totals.cache_creation_input_tokens)} written</div></div>
+    </div>
+    <div class="chart-wrap">
+      <h3>Activity — last 14 days (prompts)</h3>
+      <div class="chart">${activityBars}</div>
+    </div>
+    <div class="chart-wrap">
+      <h3>Cost — last 14 days (USD)</h3>
+      <div class="chart">${costBars}</div>
+    </div>
+    ${renderTopProjects(5)}
+  `;
+}
+
+function renderTopProjects(n) {
+  const projects = (state.tokens?.projects || []).slice(0, n);
+  if (!projects.length) return '';
+  const maxCost = Math.max(0.0001, projects[0].cost);
+  const rows = projects.map(p => {
+    const name = p.project.split('/').slice(-2).join('/') || p.project;
+    const pct = Math.round((p.cost / maxCost) * 100);
+    return `<div class="project-row">
+      <div class="project-name" title="${p.project}">${name}</div>
+      <div class="project-bar-bg"><div class="project-bar-fill" style="width:${pct}%"></div></div>
+      <div class="project-cost">$${p.cost.toFixed(2)}</div>
+    </div>`;
+  }).join('');
+  return `<div class="card"><h3>Top Projects</h3>${rows}</div>`;
+}
+
+function renderCost() {
+  const t = state.tokens;
+  if (!t) { document.getElementById('tabContent').innerHTML = '<div class="no-data">Loading...</div>'; return; }
+
+  const totals = t.totals || {};
+  const projects = t.projects || [];
+  const maxCost = Math.max(0.0001, projects[0]?.cost || 0);
+
+  const projectRows = projects.map(p => {
+    const name = p.project.split('/').slice(-3).join('/') || p.project;
+    const pct = Math.round((p.cost / maxCost) * 100);
+    return `<div class="project-row">
+      <div class="project-name" title="${p.project}">${name}</div>
+      <div class="project-bar-bg"><div class="project-bar-fill" style="width:${pct}%"></div></div>
+      <div class="project-cost">$${p.cost.toFixed(3)}</div>
+    </div>`;
+  }).join('');
+
+  // Per day table (last 30 days)
+  const dayKeys = Object.keys(t.perDay || {}).sort().reverse().slice(0, 30);
+  const dayRows = dayKeys.map(d => {
+    const day = t.perDay[d];
+    return `<div class="row">
+      <span class="key">${d}</span>
+      <span style="display:flex;gap:24px;align-items:center">
+        <span style="color:var(--muted);font-size:11px">${fmtNum(day.counts?.output_tokens)} out / ${fmtNum(day.counts?.cache_read_input_tokens)} cache read</span>
+        <span class="val green">$${day.cost.toFixed(4)}</span>
+      </span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('tabContent').innerHTML = `
+    <div class="card">
+      <h3>Token Totals (all time)</h3>
+      <div class="token-detail">
+        <div class="token-box"><div class="tval blue">${fmtNum(totals.input_tokens)}</div><div class="tlabel">Input tokens</div></div>
+        <div class="token-box"><div class="tval blue">${fmtNum(totals.output_tokens)}</div><div class="tlabel">Output tokens</div></div>
+        <div class="token-box"><div class="tval purple">${fmtNum(totals.cache_creation_input_tokens)}</div><div class="tlabel">Cache written</div></div>
+        <div class="token-box"><div class="tval purple">${fmtNum(totals.cache_read_input_tokens)}</div><div class="tlabel">Cache read</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Equiv. API Cost by Project <span style="font-size:11px;font-weight:400;color:var(--muted)">(subscription users: for reference only)</span></h3>
+      ${projectRows || '<div class="no-data">No data</div>'}
+    </div>
+    <div class="card">
+      <h3>Equiv. API Cost by Day <span style="font-size:11px;font-weight:400;color:var(--muted)">(subscription users: for reference only)</span></h3>
+      ${dayRows || '<div class="no-data">No data</div>'}
+    </div>
+  `;
+}
+
+function renderFeed() {
+  const items = [...state.history].reverse();
+  if (!items.length) {
+    document.getElementById('tabContent').innerHTML = '<div class="no-data">No history yet</div>';
+    return;
+  }
+  const html = items.map(h => {
+    const d = new Date(h.timestamp);
+    const proj = (h.project || '').split('/').slice(-2).join('/');
+    return `<div class="feed-item">
+      <div class="prompt-text">${escHtml(h.display || '')}</div>
+      <div class="prompt-meta">
+        <span class="project">${proj}</span>
+        <span>${d.toLocaleString()}</span>
+        <span style="color:var(--muted);font-size:10px">${h.sessionId?.slice(0, 8)}…</span>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('tabContent').innerHTML = `<div class="feed">${html}</div>`;
+}
+
+function renderTools() {
+  const { toolCounts = {} } = state.stats || {};
+  const entries = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]);
+
+  if (!entries.length) {
+    document.getElementById('tabContent').innerHTML = `<div class="no-data">No tool events yet.</div>`;
+    return;
+  }
+
+  const cards = entries.map(([tool, count]) => `
+    <div class="tool-card">
+      <div class="tool-name">${tool}</div>
+      <div class="tool-count">${count}</div>
+    </div>`).join('');
+
+  const recentEvents = [...state.events].reverse().slice(0, 30);
+  const eventRows = recentEvents.map(e => {
+    const tool = e.tool_name || 'unknown';
+    const tagClass = tool === 'Bash' ? 'bash' : tool.startsWith('Edit') || tool.startsWith('Write') ? 'edit' : 'tool';
+    const input = e.tool_input ? JSON.stringify(e.tool_input).slice(0, 80) : '';
+    return `<div class="feed-item">
+      <div class="prompt-meta" style="margin:0">
+        <span class="tag ${tagClass}">${tool}</span>
+        <span class="tag" style="background:rgba(255,255,255,0.05);color:var(--muted)">${e.event_type}</span>
+        <span style="color:var(--muted)">${new Date(e.timestamp).toLocaleString()}</span>
+      </div>
+      <div class="prompt-text" style="margin-top:6px;font-size:12px;color:var(--muted)">${escHtml(input)}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('tabContent').innerHTML = `
+    <div class="tools-grid">${cards}</div>
+    <div class="chart-wrap" style="margin-bottom:12px"><h3>Recent tool events (last 30)</h3></div>
+    <div class="feed">${eventRows || '<div class="no-data">No events</div>'}</div>
+  `;
+}
+
+function fmtNum(n) {
+  if (!n) return '0';
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return String(n);
+}
+
+function escHtml(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function formatRelative(d) {
+  const diff = Date.now() - d.getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h/24)}d ago`;
+}
+
+loadAll();
+setInterval(loadAll, 60000);
+</script>
+</body>
+</html>
