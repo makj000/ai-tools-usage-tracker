@@ -64,9 +64,16 @@
 
   .chart-wrap { margin-bottom: 16px; }
   .chart-wrap h3 { font-size: 12px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
-  .chart { display: flex; align-items: flex-end; gap: 3px; height: 60px; }
-  .bar-col { display: flex; flex-direction: column; align-items: center; flex: 1; }
-  .bar { background: var(--accent); opacity: 0.7; width: 100%; border-radius: 2px 2px 0 0; min-height: 1px; transition: opacity 0.2s; cursor: pointer; }
+  .chart-outer { display: flex; gap: 6px; }
+  .y-axis { display: flex; flex-direction: column; justify-content: space-between; padding-bottom: 18px; min-width: 44px; text-align: right; }
+  .y-axis span { font-size: 9px; color: var(--muted); white-space: nowrap; }
+  .chart-inner { flex: 1; position: relative; }
+  .grid-lines { position: absolute; top: 0; left: 0; right: 0; bottom: 18px; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+  .grid-line { border-top: 1px dashed rgba(48,54,61,0.8); width: 100%; }
+  .chart { display: flex; align-items: flex-end; gap: 3px; height: 100px; }
+  .bar-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; flex: 1; }
+  .bar-val { font-size: 8px; color: var(--muted); margin-bottom: 2px; white-space: nowrap; }
+  .bar { background: var(--accent); opacity: 0.75; width: 100%; border-radius: 2px 2px 0 0; min-height: 1px; transition: opacity 0.2s; cursor: pointer; }
   .bar.green { background: var(--green); }
   .bar:hover { opacity: 1; }
   .bar-label { font-size: 9px; color: var(--muted); margin-top: 3px; }
@@ -140,6 +147,35 @@
 <script>
 let state = { stats: null, tokens: null, history: [], events: [], activeTab: 'overview' };
 
+function buildChart(labels, values, fmt, barClass) {
+  const CHART_H = 100;
+  const maxVal = Math.max(...values, 0.0001);
+  const mid = maxVal / 2;
+
+  const yTop = fmt(maxVal);
+  const yMid = fmt(mid);
+
+  const bars = labels.map((lbl, i) => {
+    const v = values[i] || 0;
+    const h = Math.max(v > 0 ? 2 : 0, Math.round((v / maxVal) * CHART_H));
+    const showVal = v > 0 ? fmt(v) : '';
+    const dateLabel = lbl.length === 10 ? lbl.slice(5).replace('-', '/') : lbl;
+    return `<div class="bar-col" title="${lbl}: ${fmt(v)}">
+      <div class="bar-val">${showVal}</div>
+      <div class="bar ${barClass}" style="height:${h}px"></div>
+      <div class="bar-label">${dateLabel}</div>
+    </div>`;
+  }).join('');
+
+  return `<div class="chart-outer">
+    <div class="y-axis"><span>${yTop}</span><span>${yMid}</span><span>0</span></div>
+    <div class="chart-inner">
+      <div class="grid-lines"><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div></div>
+      <div class="chart">${bars}</div>
+    </div>
+  </div>`;
+}
+
 async function loadAll() {
   const [statsR, tokensR, histR, eventsR] = await Promise.all([
     fetch('/api/stats').then(r => r.json()),
@@ -153,7 +189,11 @@ async function loadAll() {
   state.events = eventsR;
 
   const totalCost = tokensR?.totals?.cost || 0;
-  document.getElementById('totalCostHeader').textContent = `$${totalCost.toFixed(2)}`;
+  const thisMonth2 = new Date().toISOString().slice(0, 7);
+  const monthCostHeader = Object.entries(tokensR?.perDay || {})
+    .filter(([d]) => d.startsWith(thisMonth2))
+    .reduce((sum, [, v]) => sum + v.cost, 0);
+  document.getElementById('totalCostHeader').textContent = `$${monthCostHeader.toFixed(2)} this month`;
 
   renderSidebar();
   renderTab(state.activeTab);
@@ -209,45 +249,30 @@ function renderOverview() {
     const d = new Date(); d.setDate(d.getDate() - i);
     days.push(d.toISOString().slice(0, 10));
   }
-  const maxPrompts = Math.max(1, ...days.map(d => s.perDay[d] || 0));
-  const activityBars = days.map(d => {
-    const count = s.perDay[d] || 0;
-    const h = Math.max(1, Math.round((count / maxPrompts) * 56));
-    return `<div class="bar-col" title="${d}: ${count} prompts">
-      <div class="bar" style="height:${h}px"></div>
-      <div class="bar-label">${d.slice(5).replace('-', '/')}</div>
-    </div>`;
-  }).join('');
-
-  // Cost chart — last 14 days
   const perDay = t.perDay || {};
-  const maxCost = Math.max(0.0001, ...days.map(d => (perDay[d]?.cost || 0)));
-  const costBars = days.map(d => {
-    const cost = perDay[d]?.cost || 0;
-    const h = Math.max(1, Math.round((cost / maxCost) * 56));
-    return `<div class="bar-col" title="${d}: $${cost.toFixed(4)}">
-      <div class="bar green" style="height:${h}px"></div>
-      <div class="bar-label">${d.slice(5).replace('-', '/')}</div>
-    </div>`;
-  }).join('');
-
   const todayKey = new Date().toISOString().slice(0, 10);
   const todayCost = perDay[todayKey]?.cost || 0;
 
+  // This month
+  const thisMonth = todayKey.slice(0, 7);
+  const monthCost = Object.entries(perDay)
+    .filter(([d]) => d.startsWith(thisMonth))
+    .reduce((sum, [, v]) => sum + v.cost, 0);
+
   document.getElementById('tabContent').innerHTML = `
     <div class="stat-grid">
-      <div class="stat"><div class="label">Equiv. API Cost</div><div class="value green">$${totalCost.toFixed(2)}</div><div class="sub">all sessions · subscription user</div></div>
+      <div class="stat"><div class="label">Extra Usage (equiv.)</div><div class="value green">$${monthCost.toFixed(2)}</div><div class="sub">this month · at API rates</div></div>
       <div class="stat"><div class="label">Today (equiv.)</div><div class="value green">$${todayCost.toFixed(4)}</div><div class="sub">${s.perDay[todayKey] || 0} prompts</div></div>
       <div class="stat"><div class="label">Output Tokens</div><div class="value blue">${fmtNum(totals.output_tokens)}</div><div class="sub">${fmtNum(totals.messages)} turns</div></div>
       <div class="stat"><div class="label">Cache Reads</div><div class="value purple">${fmtNum(totals.cache_read_input_tokens)}</div><div class="sub">${fmtNum(totals.cache_creation_input_tokens)} written</div></div>
     </div>
     <div class="chart-wrap">
       <h3>Activity — last 14 days (prompts)</h3>
-      <div class="chart">${activityBars}</div>
+      ${buildChart(days, days.map(d => s.perDay[d] || 0), v => String(v), '')}
     </div>
     <div class="chart-wrap">
-      <h3>Cost — last 14 days (USD)</h3>
-      <div class="chart">${costBars}</div>
+      <h3>Equiv. extra usage cost — last 14 days (USD)</h3>
+      ${buildChart(days, days.map(d => perDay[d]?.cost || 0), v => v >= 1 ? '$' + v.toFixed(1) : v > 0 ? '$' + v.toFixed(2) : '0', 'green')}
     </div>
     ${renderTopProjects(5)}
   `;
