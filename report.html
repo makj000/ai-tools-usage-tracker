@@ -144,7 +144,7 @@
   <div class="main">
     <div id="cleanupBanner"></div>
     <div class="tabs">
-      <div class="tab active" onclick="showTab('overview')">Overview</div>
+      <div class="tab" onclick="showTab('overview')">Overview</div>
       <div class="tab" onclick="showTab('cost')">Token Usage</div>
       <div class="tab" onclick="showTab('feed')">Command Feed</div>
       <div class="tab" onclick="showTab('tools')">Tool Usage</div>
@@ -159,7 +159,13 @@
   document.write('<scr' + 'ipt src="data.js?t=' + Date.now() + '"></scr' + 'ipt>');
 </script>
 <script>
-let state = { stats: null, tokens: null, history: [], events: [], activeTab: 'overview' };
+let state = {
+  stats: null,
+  tokens: null,
+  history: [],
+  events: [],
+  activeTab: localStorage.getItem('claude-tracker-tab') || 'overview',
+};
 
 function buildChart(labels, values, fmt, barClass) {
   const CHART_H = 100;
@@ -215,7 +221,7 @@ function loadAll() {
 
   renderCleanupBanner(d.maintenance);
   renderSidebar();
-  renderTab(state.activeTab);
+  showTab(state.activeTab);
 }
 
 function refresh() {
@@ -246,6 +252,7 @@ function showCleanupCommand() {
 
 function showTab(name) {
   state.activeTab = name;
+  localStorage.setItem('claude-tracker-tab', name);
   document.querySelectorAll('.tab').forEach((t, i) => {
     const tabs = ['overview', 'cost', 'feed', 'tools'];
     t.classList.toggle('active', tabs[i] === name);
