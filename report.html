@@ -83,7 +83,13 @@
 
   .feed { display: flex; flex-direction: column; gap: 8px; }
   .feed-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
-  .feed-item .prompt-text { font-size: 13px; line-height: 1.5; }
+  .feed-item .feed-head { display: flex; align-items: flex-start; gap: 12px; }
+  .feed-item .prompt-text { font-size: 13px; line-height: 1.5; flex: 1; min-width: 0; word-wrap: break-word; }
+  .feed-item .cost-pill { flex-shrink: 0; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 10px; background: rgba(63,185,80,0.12); color: var(--green); white-space: nowrap; cursor: help; }
+  .feed-item .cost-pill.zero { background: rgba(139,148,158,0.12); color: var(--muted); }
+  .feed-item .cost-pill.mid  { background: rgba(88,166,255,0.12); color: var(--blue); }
+  .feed-item .cost-pill.high { background: rgba(217,119,6,0.15); color: var(--accent); }
+  .feed-item .cost-pill.na   { background: rgba(139,148,158,0.08); color: var(--muted); font-weight: 500; }
   .feed-item .prompt-meta { font-size: 11px; color: var(--muted); margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
   .feed-item .project { color: var(--blue); }
   .tag { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: 600; }
@@ -403,11 +409,31 @@ function renderFeed() {
     document.getElementById('tabContent').innerHTML = '<div class="no-data">No history yet</div>';
     return;
   }
+
+  // Cost is attached to each history entry server-side by build.js
+  // (enrichHistory). Entries whose transcript has been cleaned up show '—'.
   const html = items.map(h => {
     const d = new Date(h.timestamp);
     const proj = (h.project || '').split('/').slice(-2).join('/');
+
+    let pill;
+    if (typeof h.cost !== 'number') {
+      pill = `<span class="cost-pill na" title="No transcript data — session may have been cleaned up or this is an interrupted prompt">—</span>`;
+    } else {
+      const cost = h.cost;
+      const turns = h.turns || 0;
+      const cls = cost === 0 ? 'zero' : cost < 0.01 ? '' : cost < 0.10 ? 'mid' : 'high';
+      const label = cost === 0 ? '$0.00' : cost < 0.01 ? '$' + cost.toFixed(4) : '$' + cost.toFixed(3);
+      const c = h.tokenCounts || {};
+      const tip = `${turns} turn${turns === 1 ? '' : 's'}  ·  ${fmtNum(c.input_tokens)} in  ·  ${fmtNum(c.output_tokens)} out  ·  ${fmtNum(c.cache_read_input_tokens)} cache read  ·  ${fmtNum(c.cache_creation_input_tokens)} cache write`;
+      pill = `<span class="cost-pill ${cls}" title="${tip}">${label}<span style="font-weight:400;opacity:0.7"> · ${turns}t</span></span>`;
+    }
+
     return `<div class="feed-item">
-      <div class="prompt-text">${escHtml(h.display || '')}</div>
+      <div class="feed-head">
+        <div class="prompt-text">${escHtml(h.display || '')}</div>
+        ${pill}
+      </div>
       <div class="prompt-meta">
         <span class="project">${proj}</span>
         <span>${d.toLocaleString()}</span>

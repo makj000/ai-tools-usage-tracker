@@ -94,19 +94,48 @@ function addCounts(target, usage) {
   target.messages = (target.messages || 0) + 1;
 }
 
+// Decide whether a transcript `type:"user"` entry is a real new prompt
+// (worth starting a new cost bucket) or just a tool_result / sidechain /
+// compact-summary that should attach to the current bucket.
+function isRealPrompt(entry) {
+  if (entry.type !== "user") return false;
+  if (entry.isSidechain) return false;
+  if (entry.isCompactSummary) return false;
+  const content = entry.message?.content;
+  if (typeof content === "string") return content.length > 0;
+  if (Array.isArray(content)) {
+    // tool_result entries are model-facing plumbing, not user prompts
+    return content.some(c => c && c.type !== "tool_result");
+  }
+  return false;
+}
+
+function extractPromptText(entry) {
+  const content = entry.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const textPart = content.find(c => c && (c.type === "text" || typeof c.text === "string"));
+    if (textPart?.text) return textPart.text;
+  }
+  return "";
+}
+
 function readAllTranscripts() {
-  if (!fs.existsSync(PROJECTS_DIR)) return { sessions: {}, perDay: {}, perProject: {}, totals: zeroCounts() };
+  if (!fs.existsSync(PROJECTS_DIR)) return { sessions: {}, perDay: {}, perProject: {}, totals: zeroCounts(), prompts: [] };
 
   const sessions = {};
   const perDay = {};
   const perProject = {};
   const totals = zeroCounts();
+  const prompts = [];
 
   const projectDirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
 
   for (const projectSlug of projectDirs) {
     const projectPath = path.join(PROJECTS_DIR, projectSlug);
     const projectName = "/" + slugToPath(projectSlug);
+    // Root-level .jsonl only — skips the `subagents/` subfolder so subagent
+    // usage isn't double-counted (it already rolls up into the parent).
     const files = fs.readdirSync(projectPath).filter(f => f.endsWith(".jsonl"));
 
     for (const file of files) {
@@ -114,9 +143,31 @@ function readAllTranscripts() {
       const filePath = path.join(projectPath, file);
       try {
         const lines = fs.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
+        let currentPrompt = null; // resets per transcript file
         for (const line of lines) {
           let entry;
           try { entry = JSON.parse(line); } catch { continue; }
+
+          // Start a new per-prompt bucket whenever we see a real user prompt.
+          if (isRealPrompt(entry)) {
+            const text = extractPromptText(entry);
+            currentPrompt = {
+              sessionId,
+              uuid: entry.uuid || null,
+              ts: entry.timestamp || null,
+              project: projectName,
+              text,
+              cost: 0,
+              turns: 0,
+              counts: zeroCounts(),
+            };
+            // messages counter in zeroCounts() is meant for assistant turns;
+            // reset it so it reflects turns, not the 1 from initialization.
+            currentPrompt.counts.messages = 0;
+            prompts.push(currentPrompt);
+            continue;
+          }
+
           if (entry.type !== "assistant" || !entry.message?.usage) continue;
           const model = entry.message.model;
           if (!model || model === "<synthetic>") continue;
@@ -144,12 +195,19 @@ function readAllTranscripts() {
 
           addCounts(totals, usage);
           totals.cost = (totals.cost || 0) + cost;
+
+          // Attribute this assistant turn to the in-flight prompt bucket.
+          if (currentPrompt) {
+            addCounts(currentPrompt.counts, usage);
+            currentPrompt.cost += cost;
+            currentPrompt.turns += 1;
+          }
         }
       } catch { /* skip */ }
     }
   }
 
-  return { sessions, perDay, perProject, totals };
+  return { sessions, perDay, perProject, totals, prompts };
 }
 
 function buildTokens() {
@@ -160,7 +218,54 @@ function buildTokens() {
   const projectList = Object.entries(data.perProject)
     .map(([project, d]) => ({ project, ...d }))
     .sort((a, b) => b.cost - a.cost);
-  return { totals: data.totals, sessions: sessionList, perDay: data.perDay, projects: projectList };
+  return {
+    totals: data.totals,
+    sessions: sessionList,
+    perDay: data.perDay,
+    projects: projectList,
+    // Expose raw prompts so enrichHistory() can attach costs to history.jsonl
+    // entries. Not serialized to data.js — dropped before write.
+    _prompts: data.prompts || [],
+  };
+}
+
+// Attach per-prompt cost data to each history.jsonl entry by matching
+// (sessionId, display text) → transcript prompt bucket. history.jsonl is
+// authoritative for "what the user typed and when"; transcripts are
+// authoritative for cost. This runs server-side so the browser doesn't need
+// any matching logic, and we're not bounded by a serialization cap.
+function enrichHistory(history, prompts) {
+  // Build a (sessionId, textKey) → prompt index. When multiple prompts share
+  // a key in a session (rare: same prompt sent twice), we queue them and
+  // pop in chronological order so each history entry gets a distinct bucket.
+  const buckets = new Map();
+  const keyOf = (sessionId, text) => sessionId + "\0" + (text || "").slice(0, 200);
+  const sortedPrompts = [...prompts].sort((a, b) => (a.ts || "").localeCompare(b.ts || ""));
+  for (const p of sortedPrompts) {
+    const k = keyOf(p.sessionId, p.text);
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(p);
+  }
+
+  // history.jsonl is appended chronologically per session, so iterate in
+  // order and shift from the queue for each match — this handles duplicate
+  // prompt text within a session correctly.
+  const sortedHistory = [...history].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  let matched = 0, unmatched = 0;
+  for (const h of sortedHistory) {
+    const k = keyOf(h.sessionId || "", h.display || "");
+    const queue = buckets.get(k);
+    if (queue && queue.length) {
+      const p = queue.shift();
+      h.cost = p.cost;
+      h.turns = p.turns;
+      h.tokenCounts = p.counts;
+      matched++;
+    } else {
+      unmatched++;
+    }
+  }
+  return { matched, unmatched };
 }
 
 function buildStats(events) {
@@ -222,11 +327,16 @@ function build() {
   // Re-scan after cleanup so the report reflects the new state.
   const fresh = process.argv.includes("--cleanup") ? readAllEventFiles() : eventData;
 
+  const tokens = buildTokens();
+  const history = readJsonl(HISTORY_PATH);
+  const enrichResult = enrichHistory(history, tokens._prompts);
+  delete tokens._prompts; // internal, don't ship
+
   const data = {
     generatedAt: new Date().toISOString(),
-    tokens: buildTokens(),
+    tokens,
     stats: buildStats(fresh.events),
-    history: readJsonl(HISTORY_PATH),
+    history,
     events: fresh.events,
     maintenance: {
       eventFiles: fresh.rotated,
@@ -238,6 +348,7 @@ function build() {
   const ms = Date.now() - t0;
   const kb = (js.length / 1024).toFixed(1);
   console.log(`[build] wrote data.js (${kb} KB) — $${data.tokens.totals.cost.toFixed(2)} equiv · ${data.tokens.totals.messages} turns · ${ms}ms`);
+  console.log(`[build] history costs attached: ${enrichResult.matched} matched, ${enrichResult.unmatched} unmatched`);
 }
 
 build();
