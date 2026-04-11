@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="pragma" content="no-cache">
+<meta http-equiv="expires" content="0">
 <title>Claude Tracker</title>
 <style>
   :root {
@@ -114,6 +117,10 @@
 
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  .banner { background: rgba(217,119,6,0.12); border: 1px solid rgba(217,119,6,0.4); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 10px; }
+  .banner code { background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; font-family: ui-monospace, Menlo, monospace; color: var(--accent); }
+  .banner .banner-btn { margin-left: auto; padding: 4px 10px; font-size: 11px; border-radius: 4px; border: 1px solid var(--accent); background: var(--accent); color: #000; cursor: pointer; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -135,6 +142,7 @@
     <div id="sessionList"><div class="no-data">Loading...</div></div>
   </div>
   <div class="main">
+    <div id="cleanupBanner"></div>
     <div class="tabs">
       <div class="tab active" onclick="showTab('overview')">Overview</div>
       <div class="tab" onclick="showTab('cost')">Token Usage</div>
@@ -145,7 +153,11 @@
   </div>
 </div>
 
-<script src="data.js"></script>
+<script>
+  // Cache-bust data.js so periodic page refreshes always see the freshest build.
+  // The hook-triggered build atomically rewrites data.js after each Claude tool use.
+  document.write('<scr' + 'ipt src="data.js?t=' + Date.now() + '"></scr' + 'ipt>');
+</script>
 <script>
 let state = { stats: null, tokens: null, history: [], events: [], activeTab: 'overview' };
 
@@ -201,12 +213,35 @@ function loadAll() {
     if (el) el.textContent = `data: ${ago}`;
   }
 
+  renderCleanupBanner(d.maintenance);
   renderSidebar();
   renderTab(state.activeTab);
 }
 
 function refresh() {
-  alert('To refresh data, run:\n\n  node scripts/build.js\n\nthen reload this page.');
+  alert('To refresh data, run:\n\n  node scripts/build.js\n\nthen reload this page.\n\n(Tip: this happens automatically after every Claude Code tool use, via the log_hook.)');
+}
+
+function renderCleanupBanner(m) {
+  const el = document.getElementById('cleanupBanner');
+  if (!el) return;
+  if (!m || !m.oldFiles || !m.oldFiles.length) { el.innerHTML = ''; return; }
+  const n = m.oldFiles.length;
+  el.innerHTML = `
+    <div class="banner">
+      <span>You have <strong>${n}</strong> rotated event file${n > 1 ? 's' : ''} older than 6 months. Run the cleanup command to delete ${n > 1 ? 'them' : 'it'}.</span>
+      <button class="banner-btn" onclick="showCleanupCommand()">Show command</button>
+    </div>`;
+}
+
+function showCleanupCommand() {
+  const m = window.TRACKER_DATA?.maintenance;
+  const list = m?.oldFiles?.join('\n  ') || '';
+  const msg = `To delete event files older than 6 months, run:\n\n  node scripts/build.js --cleanup\n\nFiles that will be removed:\n  ${list}`;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText('node scripts/build.js --cleanup').catch(() => {});
+  }
+  alert(msg);
 }
 
 function showTab(name) {
