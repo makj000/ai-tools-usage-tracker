@@ -36,7 +36,7 @@
   .sidebar { background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; }
   .main { overflow-y: auto; padding: 20px; }
 
-  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 16px; }
+  .stat-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 16px; }
   .stat { background: var(--surface); padding: 14px; }
   .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
   .stat .value { font-size: 22px; font-weight: 700; color: var(--text); }
@@ -306,6 +306,7 @@ function renderOverview() {
     <div class="stat-grid">
       <div class="stat"><div class="label">Extra Usage (equiv.)</div><div class="value green">$${monthCost.toFixed(2)}</div><div class="sub">this month · at API rates</div></div>
       <div class="stat"><div class="label">Today (equiv.)</div><div class="value green">$${todayCost.toFixed(4)}</div><div class="sub">${s.perDay[todayKey] || 0} prompts</div></div>
+      <div class="stat"><div class="label">Input Tokens</div><div class="value blue">${fmtNum(totals.input_tokens)}</div><div class="sub">non-cached</div></div>
       <div class="stat"><div class="label">Output Tokens</div><div class="value blue">${fmtNum(totals.output_tokens)}</div><div class="sub">${fmtNum(totals.messages)} turns</div></div>
       <div class="stat"><div class="label">Cache Reads</div><div class="value purple">${fmtNum(totals.cache_read_input_tokens)}</div><div class="sub">${fmtNum(totals.cache_creation_input_tokens)} written</div></div>
     </div>
