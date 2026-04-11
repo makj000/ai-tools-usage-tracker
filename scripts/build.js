@@ -1,13 +1,16 @@
-const express = require("express");
+#!/usr/bin/env node
+/**
+ * Build script: reads all data sources and writes data.js
+ * Run: node scripts/build.js
+ *      node scripts/build.js --watch    (re-run on file changes)
+ */
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { execFile } = require("child_process");
 
-const app = express();
-const PORT = process.env.PORT || 3737;
-
-const DATA_DIR = path.join(__dirname, "data");
+const ROOT = path.dirname(__dirname);
+const DATA_DIR = path.join(ROOT, "data");
+const OUTPUT = path.join(ROOT, "data.js");
 const HISTORY_PATH = path.join(os.homedir(), ".claude", "history.jsonl");
 const EVENTS_FILE = path.join(DATA_DIR, "events.jsonl");
 const PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
@@ -16,17 +19,16 @@ const PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
 const MODEL_PRICING = {
   "claude-sonnet-4-6": { input: 3.0, output: 15.0, cacheWrite: 3.75, cacheRead: 0.30 },
   "claude-opus-4-6":   { input: 15.0, output: 75.0, cacheWrite: 18.75, cacheRead: 1.50 },
-  "claude-haiku-4-5-20251001": { input: 0.80, output: 4.0, cacheWrite: 1.0, cacheRead: 0.08 },
   "claude-haiku-4-5":  { input: 0.80, output: 4.0, cacheWrite: 1.0, cacheRead: 0.08 },
   "default":           { input: 3.0, output: 15.0, cacheWrite: 3.75, cacheRead: 0.30 },
 };
 
 function getPricing(model) {
+  if (!model) return MODEL_PRICING.default;
   for (const [key, price] of Object.entries(MODEL_PRICING)) {
-    if (key !== "default" && model && model.includes(key)) return price;
-    if (model === key) return price;
+    if (key !== "default" && model.includes(key)) return price;
   }
-  return MODEL_PRICING["default"];
+  return MODEL_PRICING.default;
 }
 
 function calcCost(usage, model) {
@@ -41,15 +43,19 @@ function calcCost(usage, model) {
 
 function readJsonl(filePath) {
   if (!fs.existsSync(filePath)) return [];
-  const lines = fs.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
-  return lines.map((line) => {
+  return fs.readFileSync(filePath, "utf8").split("\n").filter(Boolean).map(line => {
     try { return JSON.parse(line); } catch { return null; }
   }).filter(Boolean);
 }
 
-// Decode project slug back to path
-function slugToPath(slug) {
-  return slug.replace(/-/g, "/").replace(/^\//, "");
+function slugToPath(slug) { return slug.replace(/-/g, "/").replace(/^\//, ""); }
+function zeroCounts() { return { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, messages: 0, cost: 0 }; }
+function addCounts(target, usage) {
+  target.input_tokens += usage.input_tokens || 0;
+  target.output_tokens += usage.output_tokens || 0;
+  target.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0;
+  target.cache_read_input_tokens += usage.cache_read_input_tokens || 0;
+  target.messages = (target.messages || 0) + 1;
 }
 
 function readAllTranscripts() {
@@ -60,9 +66,7 @@ function readAllTranscripts() {
   const perProject = {};
   const totals = zeroCounts();
 
-  const projectDirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
-    .filter(d => d.isDirectory())
-    .map(d => d.name);
+  const projectDirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
 
   for (const projectSlug of projectDirs) {
     const projectPath = path.join(PROJECTS_DIR, projectSlug);
@@ -72,15 +76,12 @@ function readAllTranscripts() {
     for (const file of files) {
       const sessionId = file.replace(".jsonl", "");
       const filePath = path.join(projectPath, file);
-
       try {
         const lines = fs.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
         for (const line of lines) {
           let entry;
           try { entry = JSON.parse(line); } catch { continue; }
-
           if (entry.type !== "assistant" || !entry.message?.usage) continue;
-
           const model = entry.message.model;
           if (!model || model === "<synthetic>") continue;
 
@@ -89,7 +90,6 @@ function readAllTranscripts() {
           const ts = entry.timestamp;
           const day = ts ? ts.slice(0, 10) : "unknown";
 
-          // Session
           if (!sessions[sessionId]) {
             sessions[sessionId] = { sessionId, project: projectName, model, counts: zeroCounts(), cost: 0, firstTs: ts, lastTs: ts };
           }
@@ -98,68 +98,36 @@ function readAllTranscripts() {
           if (ts < sessions[sessionId].firstTs) sessions[sessionId].firstTs = ts;
           if (ts > sessions[sessionId].lastTs) sessions[sessionId].lastTs = ts;
 
-          // Per day
           if (!perDay[day]) perDay[day] = { counts: zeroCounts(), cost: 0 };
           addCounts(perDay[day].counts, usage);
           perDay[day].cost += cost;
 
-          // Per project
           if (!perProject[projectName]) perProject[projectName] = { counts: zeroCounts(), cost: 0 };
           addCounts(perProject[projectName].counts, usage);
           perProject[projectName].cost += cost;
 
-          // Totals
           addCounts(totals, usage);
           totals.cost = (totals.cost || 0) + cost;
         }
-      } catch { /* skip unreadable files */ }
+      } catch { /* skip */ }
     }
   }
 
   return { sessions, perDay, perProject, totals };
 }
 
-function zeroCounts() {
-  return { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, messages: 0, cost: 0 };
-}
-
-function addCounts(target, usage) {
-  target.input_tokens += usage.input_tokens || 0;
-  target.output_tokens += usage.output_tokens || 0;
-  target.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0;
-  target.cache_read_input_tokens += usage.cache_read_input_tokens || 0;
-  target.messages = (target.messages || 0) + 1;
-}
-
-app.use(express.static(path.join(__dirname, "public")));
-
-app.get("/api/history", (req, res) => {
-  res.json(readJsonl(HISTORY_PATH));
-});
-
-app.get("/api/events", (req, res) => {
-  res.json(readJsonl(EVENTS_FILE));
-});
-
-app.get("/api/tokens", (req, res) => {
+function buildTokens() {
   const data = readAllTranscripts();
   const sessionList = Object.values(data.sessions)
     .sort((a, b) => (b.lastTs || "").localeCompare(a.lastTs || ""))
     .slice(0, 100);
-
   const projectList = Object.entries(data.perProject)
     .map(([project, d]) => ({ project, ...d }))
     .sort((a, b) => b.cost - a.cost);
+  return { totals: data.totals, sessions: sessionList, perDay: data.perDay, projects: projectList };
+}
 
-  res.json({
-    totals: data.totals,
-    sessions: sessionList,
-    perDay: data.perDay,
-    projects: projectList,
-  });
-});
-
-app.get("/api/stats", (req, res) => {
+function buildStats() {
   const history = readJsonl(HISTORY_PATH);
   const events = readJsonl(EVENTS_FILE);
 
@@ -187,16 +155,40 @@ app.get("/api/stats", (req, res) => {
     perDay[day] = (perDay[day] || 0) + 1;
   }
 
-  res.json({
+  return {
     totalPrompts: history.length,
     totalSessions: Object.keys(sessions).length,
-    totalToolUses: events.filter((e) => e.event_type === "PreToolUse").length,
+    totalToolUses: events.filter(e => e.event_type === "PreToolUse").length,
     toolCounts,
     perDay,
     sessions: Object.values(sessions).sort((a, b) => b.end - a.end).slice(0, 50),
-  });
-});
+  };
+}
 
-app.listen(PORT, () => {
-  console.log(`Claude Tracker running at http://localhost:${PORT}`);
-});
+function build() {
+  const t0 = Date.now();
+  const data = {
+    generatedAt: new Date().toISOString(),
+    tokens: buildTokens(),
+    stats: buildStats(),
+    history: readJsonl(HISTORY_PATH),
+    events: readJsonl(EVENTS_FILE),
+  };
+  const js = `// Generated by scripts/build.js — do not edit\nwindow.TRACKER_DATA = ${JSON.stringify(data)};\n`;
+  fs.writeFileSync(OUTPUT, js);
+  const ms = Date.now() - t0;
+  const kb = (js.length / 1024).toFixed(1);
+  console.log(`[build] wrote data.js (${kb} KB) — $${data.tokens.totals.cost.toFixed(2)} equiv · ${data.tokens.totals.messages} turns · ${ms}ms`);
+}
+
+build();
+
+if (process.argv.includes("--watch")) {
+  console.log("[build] watching for changes... (Ctrl+C to stop)");
+  let timer = null;
+  const debounced = () => { clearTimeout(timer); timer = setTimeout(build, 800); };
+  // Watch projects dir, events file, history file
+  try { fs.watch(PROJECTS_DIR, { recursive: true }, debounced); } catch (e) { console.warn("[build] cannot watch projects dir:", e.message); }
+  try { if (fs.existsSync(EVENTS_FILE)) fs.watch(EVENTS_FILE, debounced); } catch {}
+  try { if (fs.existsSync(HISTORY_PATH)) fs.watch(HISTORY_PATH, debounced); } catch {}
+}

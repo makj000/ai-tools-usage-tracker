@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "claude-tracker",
-      "runtimeExecutable": "/opt/homebrew/bin/node",
-      "runtimeArgs": ["server.js"],
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "3737"],
       "port": 3737,
       "autoPort": false
     }

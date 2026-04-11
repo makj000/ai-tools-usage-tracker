@@ -121,6 +121,7 @@
 <header>
   <h1>Claude Tracker</h1>
   <span class="subtitle">Commands &amp; Token Usage</span>
+  <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
     <span id="totalCostHeader" class="total-cost"></span>
     <span style="font-size:10px;color:var(--muted)">equiv. API cost</span>
@@ -144,6 +145,7 @@
   </div>
 </div>
 
+<script src="data.js"></script>
 <script>
 let state = { stats: null, tokens: null, history: [], events: [], activeTab: 'overview' };
 
@@ -176,30 +178,36 @@ function buildChart(labels, values, fmt, barClass) {
   </div>`;
 }
 
-async function loadAll() {
-  const [statsR, tokensR, histR, eventsR] = await Promise.all([
-    fetch('/api/stats').then(r => r.json()),
-    fetch('/api/tokens').then(r => r.json()),
-    fetch('/api/history').then(r => r.json()),
-    fetch('/api/events').then(r => r.json()),
-  ]);
-  state.stats = statsR;
-  state.tokens = tokensR;
-  state.history = histR;
-  state.events = eventsR;
+function loadAll() {
+  const d = window.TRACKER_DATA;
+  if (!d) {
+    document.getElementById('tabContent').innerHTML = '<div class="no-data">No data.js found.<br><br>Run <code>node scripts/build.js</code> in the project directory, then reload this page.</div>';
+    return;
+  }
+  state.stats = d.stats;
+  state.tokens = d.tokens;
+  state.history = d.history;
+  state.events = d.events;
 
-  const totalCost = tokensR?.totals?.cost || 0;
   const thisMonth2 = new Date().toISOString().slice(0, 7);
-  const monthCostHeader = Object.entries(tokensR?.perDay || {})
-    .filter(([d]) => d.startsWith(thisMonth2))
+  const monthCostHeader = Object.entries(d.tokens?.perDay || {})
+    .filter(([day]) => day.startsWith(thisMonth2))
     .reduce((sum, [, v]) => sum + v.cost, 0);
   document.getElementById('totalCostHeader').textContent = `$${monthCostHeader.toFixed(2)} this month`;
+
+  if (d.generatedAt) {
+    const ago = formatRelative(new Date(d.generatedAt));
+    const el = document.getElementById('freshness');
+    if (el) el.textContent = `data: ${ago}`;
+  }
 
   renderSidebar();
   renderTab(state.activeTab);
 }
 
-function refresh() { loadAll(); }
+function refresh() {
+  alert('To refresh data, run:\n\n  node scripts/build.js\n\nthen reload this page.');
+}
 
 function showTab(name) {
   state.activeTab = name;
@@ -426,7 +434,6 @@ function formatRelative(d) {
 }
 
 loadAll();
-setInterval(loadAll, 60000);
 </script>
 </body>
 </html>
