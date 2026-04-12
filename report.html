@@ -47,6 +47,15 @@
 
   .section-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 12px 16px 6px; }
 
+  /* Sidebar project list */
+  .sidebar-project { padding: 8px 16px; cursor: pointer; border-bottom: 1px solid var(--border); transition: background 0.1s; display: flex; align-items: center; gap: 8px; user-select: none; }
+  .sidebar-project:hover { background: rgba(255,255,255,0.04); }
+  .sidebar-project.active { background: rgba(88,166,255,0.08); border-left: 2px solid var(--blue); padding-left: 14px; }
+  .sidebar-project .sp-name { font-size: 12px; color: var(--blue); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sidebar-project .sp-cost { font-size: 11px; font-weight: 600; color: var(--green); flex-shrink: 0; }
+  .sidebar-project .sp-bar { flex: 0 0 40px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .sidebar-project .sp-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+
   .session-item { padding: 10px 16px; cursor: pointer; border-bottom: 1px solid var(--border); transition: background 0.1s; }
   .session-item:hover, .session-item.active { background: rgba(255,255,255,0.04); }
   .session-item .project { font-size: 11px; color: var(--blue); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -74,9 +83,10 @@
   .grid-lines { position: absolute; top: 0; left: 0; right: 0; bottom: 18px; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
   .grid-line { border-top: 1px dashed rgba(48,54,61,0.8); width: 100%; }
   .chart { display: flex; align-items: flex-end; gap: 3px; height: 100px; }
-  .bar-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; flex: 1; }
+  .bar-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; flex: 1; cursor: pointer; }
+  .bar-col.active-bar .bar { opacity: 1; box-shadow: 0 0 6px rgba(88,166,255,0.5); }
   .bar-val { font-size: 8px; color: var(--muted); margin-bottom: 2px; white-space: nowrap; }
-  .bar { background: var(--accent); opacity: 0.75; width: 100%; border-radius: 2px 2px 0 0; min-height: 1px; transition: opacity 0.2s; cursor: pointer; }
+  .bar { background: var(--accent); opacity: 0.75; width: 100%; border-radius: 2px 2px 0 0; min-height: 1px; transition: opacity 0.2s, box-shadow 0.2s; }
   .bar.green { background: var(--green); }
   .bar:hover { opacity: 1; }
   .bar-label { font-size: 9px; color: var(--muted); margin-top: 3px; }
@@ -102,8 +112,9 @@
   .tool-card .tool-name { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
   .tool-card .tool-count { font-size: 20px; font-weight: 700; color: var(--accent); }
 
-  .project-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .project-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); transition: background 0.3s; }
   .project-row:last-child { border-bottom: none; }
+  .project-row.highlight { background: rgba(88,166,255,0.12); border-radius: 4px; }
   .project-bar-bg { flex: 1; background: var(--border); border-radius: 2px; height: 6px; overflow: hidden; }
   .project-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
   .project-name { font-size: 12px; color: var(--blue); width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
@@ -127,6 +138,15 @@
   .banner { background: rgba(217,119,6,0.12); border: 1px solid rgba(217,119,6,0.4); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 10px; }
   .banner code { background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; font-family: ui-monospace, Menlo, monospace; color: var(--accent); }
   .banner .banner-btn { margin-left: auto; padding: 4px 10px; font-size: 11px; border-radius: 4px; border: 1px solid var(--accent); background: var(--accent); color: #000; cursor: pointer; font-weight: 600; }
+
+  /* Filter bar */
+  .filter-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 12px; background: rgba(88,166,255,0.06); border: 1px solid rgba(88,166,255,0.2); border-radius: 6px; font-size: 12px; }
+  .filter-bar .filter-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .filter-tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; background: rgba(88,166,255,0.12); border-radius: 4px; color: var(--blue); font-size: 12px; font-weight: 600; }
+  .filter-tag .remove { cursor: pointer; opacity: 0.6; font-size: 14px; line-height: 1; }
+  .filter-tag .remove:hover { opacity: 1; }
+  .filter-reset { margin-left: auto; padding: 4px 10px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+  .filter-reset:hover { background: var(--border); }
 </style>
 </head>
 <body>
@@ -144,15 +164,17 @@
 
 <div class="layout">
   <div class="sidebar" id="sidebar">
+    <div class="section-title">Top Projects</div>
+    <div id="projectList"></div>
     <div class="section-title">Sessions (by equiv. cost)</div>
     <div id="sessionList"><div class="no-data">Loading...</div></div>
   </div>
   <div class="main">
     <div id="cleanupBanner"></div>
+    <div id="filterBar"></div>
     <div class="tabs">
       <div class="tab" onclick="showTab('overview')">Overview</div>
       <div class="tab" onclick="showTab('cost')">Token Usage</div>
-      <div class="tab" onclick="showTab('feed')">Command Feed</div>
       <div class="tab" onclick="showTab('tools')">Tool Usage</div>
     </div>
     <div id="tabContent"></div>
@@ -171,13 +193,90 @@ let state = {
   history: [],
   events: [],
   activeTab: localStorage.getItem('claude-tracker-tab') || 'overview',
+  filterProject: localStorage.getItem('claude-tracker-filterProject') || null,
+  filterDay: localStorage.getItem('claude-tracker-filterDay') || null,
+  feedSearch: '',
 };
 
-function buildChart(labels, values, fmt, barClass) {
+// --- helpers for computing per-project per-day data ---
+// Build a map: project -> day -> { prompts, cost }
+// from history entries (which have per-prompt cost from enrichHistory).
+function buildProjectDayMap() {
+  const map = {};
+  for (const h of state.history) {
+    const proj = h.project || '';
+    const day = h.timestamp ? new Date(h.timestamp).toISOString().slice(0, 10) : null;
+    if (!day) continue;
+    if (!map[proj]) map[proj] = {};
+    if (!map[proj][day]) map[proj][day] = { prompts: 0, cost: 0 };
+    map[proj][day].prompts++;
+    map[proj][day].cost += (typeof h.cost === 'number' ? h.cost : 0);
+  }
+  return map;
+}
+
+// Return history entries matching current filters
+function filteredHistory() {
+  return state.history.filter(h => {
+    if (state.filterProject && h.project !== state.filterProject) return false;
+    if (state.filterDay) {
+      const d = h.timestamp ? new Date(h.timestamp).toISOString().slice(0, 10) : null;
+      if (d !== state.filterDay) return false;
+    }
+    return true;
+  });
+}
+
+// Return sessions matching current filters
+function filteredSessions() {
+  const sessions = state.tokens?.sessions || [];
+  return sessions.filter(s => {
+    if (state.filterProject && s.project !== state.filterProject) return false;
+    if (state.filterDay) {
+      // session spans days; include if its range overlaps the filter day
+      const first = s.firstTs ? s.firstTs.slice(0, 10) : '';
+      const last = s.lastTs ? s.lastTs.slice(0, 10) : '';
+      if (state.filterDay < first || state.filterDay > last) return false;
+    }
+    return true;
+  });
+}
+
+function hasFilters() { return state.filterProject || state.filterDay; }
+
+function setFilter(opts) {
+  if ('project' in opts) state.filterProject = opts.project;
+  if ('day' in opts) state.filterDay = opts.day;
+  persistFilters();
+  renderFilterBar();
+  renderSidebar();
+  renderTab(state.activeTab);
+}
+
+function clearFilters() {
+  state.filterProject = null;
+  state.filterDay = null;
+  persistFilters();
+  renderFilterBar();
+  renderSidebar();
+  renderTab(state.activeTab);
+}
+
+function persistFilters() {
+  if (state.filterProject) localStorage.setItem('claude-tracker-filterProject', state.filterProject);
+  else localStorage.removeItem('claude-tracker-filterProject');
+  if (state.filterDay) localStorage.setItem('claude-tracker-filterDay', state.filterDay);
+  else localStorage.removeItem('claude-tracker-filterDay');
+}
+
+function clearFilterProject() { setFilter({ project: null }); }
+function clearFilterDay() { setFilter({ day: null }); }
+
+// --- chart builder (with click-to-filter) ---
+function buildChart(labels, values, fmt, barClass, chartId) {
   const CHART_H = 100;
   const maxVal = Math.max(...values, 0.0001);
   const mid = maxVal / 2;
-
   const yTop = fmt(maxVal);
   const yMid = fmt(mid);
 
@@ -186,7 +285,8 @@ function buildChart(labels, values, fmt, barClass) {
     const h = Math.max(v > 0 ? 2 : 0, Math.round((v / maxVal) * CHART_H));
     const showVal = v > 0 ? fmt(v) : '';
     const dateLabel = lbl.length === 10 ? lbl.slice(5).replace('-', '/') : lbl;
-    return `<div class="bar-col" title="${lbl}: ${fmt(v)}">
+    const activeClass = state.filterDay === lbl ? 'active-bar' : '';
+    return `<div class="bar-col ${activeClass}" title="${lbl}: ${fmt(v)}" onclick="onBarClick('${lbl}')">
       <div class="bar-val">${showVal}</div>
       <div class="bar ${barClass}" style="height:${h}px"></div>
       <div class="bar-label">${dateLabel}</div>
@@ -202,6 +302,55 @@ function buildChart(labels, values, fmt, barClass) {
   </div>`;
 }
 
+function onBarClick(day) {
+  // Toggle: clicking same bar again clears filter
+  if (state.filterDay === day) {
+    setFilter({ day: null });
+  } else {
+    setFilter({ day: day });
+  }
+}
+
+// --- project click handlers ---
+let dblClickTimer = null;
+function onProjectClick(projectPath) {
+  if (dblClickTimer) {
+    // Double-click detected
+    clearTimeout(dblClickTimer);
+    dblClickTimer = null;
+    onProjectDblClick(projectPath);
+    return;
+  }
+  dblClickTimer = setTimeout(() => {
+    dblClickTimer = null;
+    // Single click: toggle project filter
+    if (state.filterProject === projectPath) {
+      setFilter({ project: null });
+    } else {
+      setFilter({ project: projectPath });
+    }
+  }, 250);
+}
+
+function onProjectDblClick(projectPath) {
+  // Set filter and switch to Token Usage tab, highlight project
+  state.filterProject = projectPath;
+  showTab('cost');
+  // After render, find and highlight the matching project row
+  setTimeout(() => {
+    const rows = document.querySelectorAll('.project-row[data-project]');
+    for (const row of rows) {
+      if (row.dataset.project === projectPath) {
+        row.classList.add('highlight');
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => row.classList.remove('highlight'), 5000);
+        break;
+      }
+    }
+  }, 50);
+}
+
+// --- rendering ---
 function loadAll() {
   const d = window.TRACKER_DATA;
   if (!d) {
@@ -226,6 +375,7 @@ function loadAll() {
   }
 
   renderCleanupBanner(d.maintenance);
+  renderFilterBar();
   renderSidebar();
   showTab(state.activeTab);
 }
@@ -256,11 +406,31 @@ function showCleanupCommand() {
   alert(msg);
 }
 
+function renderFilterBar() {
+  const el = document.getElementById('filterBar');
+  if (!hasFilters()) { el.innerHTML = ''; return; }
+
+  let tags = '';
+  if (state.filterProject) {
+    const name = state.filterProject.split('/').slice(-2).join('/') || state.filterProject;
+    tags += `<span class="filter-tag">Project: ${escHtml(name)} <span class="remove" onclick="clearFilterProject()">&times;</span></span>`;
+  }
+  if (state.filterDay) {
+    tags += `<span class="filter-tag">Day: ${state.filterDay} <span class="remove" onclick="clearFilterDay()">&times;</span></span>`;
+  }
+
+  el.innerHTML = `<div class="filter-bar">
+    <span class="filter-label">Filtered by</span>
+    ${tags}
+    <button class="filter-reset" onclick="clearFilters()">Reset all</button>
+  </div>`;
+}
+
 function showTab(name) {
   state.activeTab = name;
   localStorage.setItem('claude-tracker-tab', name);
   document.querySelectorAll('.tab').forEach((t, i) => {
-    const tabs = ['overview', 'cost', 'feed', 'tools'];
+    const tabs = ['overview', 'cost', 'tools'];
     t.classList.toggle('active', tabs[i] === name);
   });
   renderTab(name);
@@ -274,13 +444,44 @@ function renderTab(name) {
 }
 
 function renderSidebar() {
-  const sessions = (state.tokens?.sessions || []).slice(0, 60);
+  // Top projects section — when filtered by day, recompute per-project costs for that day
+  const projEl = document.getElementById('projectList');
+  let projectsForSidebar;
+  if (state.filterDay) {
+    const pdMap = buildProjectDayMap();
+    projectsForSidebar = Object.entries(pdMap)
+      .map(([project, days]) => ({ project, cost: days[state.filterDay]?.cost || 0, prompts: days[state.filterDay]?.prompts || 0 }))
+      .filter(p => p.cost > 0 || p.prompts > 0)
+      .sort((a, b) => b.cost - a.cost)
+      .slice(0, 10);
+  } else {
+    projectsForSidebar = (state.tokens?.projects || []).slice(0, 10);
+  }
+  if (!projectsForSidebar.length) {
+    projEl.innerHTML = '<div class="no-data" style="padding:12px 16px">No projects</div>';
+  } else {
+    const maxCost = Math.max(0.0001, projectsForSidebar[0].cost);
+    projEl.innerHTML = projectsForSidebar.map(p => {
+      const name = p.project.split('/').slice(-2).join('/') || p.project;
+      const pct = Math.round((p.cost / maxCost) * 100);
+      const active = state.filterProject === p.project ? 'active' : '';
+      return `<div class="sidebar-project ${active}" onclick="onProjectClick('${escAttr(p.project)}')" title="Double-click to jump to Token Usage">
+        <div class="sp-name" title="${escHtml(p.project)}">${escHtml(name)}</div>
+        <div class="sp-bar"><div class="sp-bar-fill" style="width:${pct}%"></div></div>
+        <div class="sp-cost">$${p.cost.toFixed(2)}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // Sessions section (filtered)
+  const sessions = filteredSessions().slice(0, 60);
+  const sessEl = document.getElementById('sessionList');
   if (!sessions.length) {
-    document.getElementById('sessionList').innerHTML = '<div class="no-data">No sessions yet</div>';
+    sessEl.innerHTML = '<div class="no-data">No sessions</div>';
     return;
   }
-  document.getElementById('sessionList').innerHTML = sessions.map(s => {
-    const when = s.lastTs ? formatRelative(new Date(s.lastTs)) : '—';
+  sessEl.innerHTML = sessions.map(s => {
+    const when = s.lastTs ? formatSessionDate(new Date(s.lastTs)) : '—';
     const proj = (s.project || '').split('/').slice(-2).join('/');
     const cost = s.cost || 0;
     return `<div class="session-item">
@@ -297,7 +498,6 @@ function renderOverview() {
   if (!s || !t) { document.getElementById('tabContent').innerHTML = '<div class="no-data">Loading...</div>'; return; }
 
   const totals = t.totals || {};
-  const totalCost = totals.cost || 0;
 
   // Activity chart — last 14 days (prompts)
   const days = [];
@@ -307,48 +507,68 @@ function renderOverview() {
   }
   const perDay = t.perDay || {};
   const todayKey = new Date().toISOString().slice(0, 10);
-  const todayCost = perDay[todayKey]?.cost || 0;
 
-  // This month
+  // Compute filtered chart data
+  const pdMap = buildProjectDayMap();
+
+  // For the Activity chart, count prompts per day (filtered by project if set)
+  const activityValues = days.map(day => {
+    if (state.filterProject) {
+      return pdMap[state.filterProject]?.[day]?.prompts || 0;
+    }
+    return s.perDay[day] || 0;
+  });
+
+  // For the Cost chart, sum cost per day (filtered by project if set)
+  const costValues = days.map(day => {
+    if (state.filterProject) {
+      return pdMap[state.filterProject]?.[day]?.cost || 0;
+    }
+    return perDay[day]?.cost || 0;
+  });
+
+  const todayCost = costValues[costValues.length - 1] || 0;
+  const todayPrompts = activityValues[activityValues.length - 1] || 0;
+
   const thisMonth = todayKey.slice(0, 7);
-  const monthCost = Object.entries(perDay)
-    .filter(([d]) => d.startsWith(thisMonth))
-    .reduce((sum, [, v]) => sum + v.cost, 0);
+  let monthCost;
+  if (state.filterProject) {
+    monthCost = Object.entries(pdMap[state.filterProject] || {})
+      .filter(([d]) => d.startsWith(thisMonth))
+      .reduce((sum, [, v]) => sum + v.cost, 0);
+  } else {
+    monthCost = Object.entries(perDay)
+      .filter(([d]) => d.startsWith(thisMonth))
+      .reduce((sum, [, v]) => sum + v.cost, 0);
+  }
+
+  // Command feed (filtered) — show in overview tab where Top Projects used to be
+  const feedHtml = renderFeedItems(filterBySearch(filteredHistory().reverse()).slice(0, 20));
 
   document.getElementById('tabContent').innerHTML = `
     <div class="stat-grid">
       <div class="stat"><div class="label">Extra Usage (equiv.)</div><div class="value green">$${monthCost.toFixed(2)}</div><div class="sub">this month · at API rates</div></div>
-      <div class="stat"><div class="label">Today (equiv.)</div><div class="value green">$${todayCost.toFixed(4)}</div><div class="sub">${s.perDay[todayKey] || 0} prompts</div></div>
+      <div class="stat"><div class="label">Today (equiv.)</div><div class="value green">$${todayCost.toFixed(4)}</div><div class="sub">${todayPrompts} prompts</div></div>
       <div class="stat"><div class="label">Input Tokens</div><div class="value blue">${fmtNum(totals.input_tokens)}</div><div class="sub">non-cached</div></div>
       <div class="stat"><div class="label">Output Tokens</div><div class="value blue">${fmtNum(totals.output_tokens)}</div><div class="sub">${fmtNum(totals.messages)} turns</div></div>
       <div class="stat"><div class="label">Cache Reads</div><div class="value purple">${fmtNum(totals.cache_read_input_tokens)}</div><div class="sub">${fmtNum(totals.cache_creation_input_tokens)} written</div></div>
     </div>
     <div class="chart-wrap">
-      <h3>Activity — last 14 days (prompts)</h3>
-      ${buildChart(days, days.map(d => s.perDay[d] || 0), v => String(v), '')}
+      <h3>Activity — last 14 days (prompts)${state.filterProject ? ' · filtered' : ''}</h3>
+      ${buildChart(days, activityValues, v => String(Math.round(v)), '', 'activity')}
     </div>
     <div class="chart-wrap">
-      <h3>Equiv. extra usage cost — last 14 days (USD)</h3>
-      ${buildChart(days, days.map(d => perDay[d]?.cost || 0), v => v >= 1 ? '$' + v.toFixed(1) : v > 0 ? '$' + v.toFixed(2) : '0', 'green')}
+      <h3>Equiv. extra usage cost — last 14 days (USD)${state.filterProject ? ' · filtered' : ''}</h3>
+      ${buildChart(days, costValues, v => v >= 1 ? '$' + v.toFixed(1) : v > 0 ? '$' + v.toFixed(2) : '0', 'green', 'cost')}
     </div>
-    ${renderTopProjects(5)}
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h3 style="margin-bottom:0">Recent Commands${hasFilters() ? ' (filtered)' : ''}</h3>
+        <input type="text" id="feedSearchInput" placeholder="Search..." value="${escHtml(state.feedSearch)}" oninput="onFeedSearchOverview(this.value)" style="width:200px;padding:5px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;outline:none;font-family:inherit;" />
+      </div>
+      ${feedHtml || '<div class="no-data">No matching commands</div>'}
+    </div>
   `;
-}
-
-function renderTopProjects(n) {
-  const projects = (state.tokens?.projects || []).slice(0, n);
-  if (!projects.length) return '';
-  const maxCost = Math.max(0.0001, projects[0].cost);
-  const rows = projects.map(p => {
-    const name = p.project.split('/').slice(-2).join('/') || p.project;
-    const pct = Math.round((p.cost / maxCost) * 100);
-    return `<div class="project-row">
-      <div class="project-name" title="${p.project}">${name}</div>
-      <div class="project-bar-bg"><div class="project-bar-fill" style="width:${pct}%"></div></div>
-      <div class="project-cost">$${p.cost.toFixed(2)}</div>
-    </div>`;
-  }).join('');
-  return `<div class="card"><h3>Top Projects</h3>${rows}</div>`;
 }
 
 function renderCost() {
@@ -362,7 +582,8 @@ function renderCost() {
   const projectRows = projects.map(p => {
     const name = p.project.split('/').slice(-3).join('/') || p.project;
     const pct = Math.round((p.cost / maxCost) * 100);
-    return `<div class="project-row">
+    const isFiltered = state.filterProject === p.project;
+    return `<div class="project-row${isFiltered ? ' highlight' : ''}" data-project="${escAttr(p.project)}">
       <div class="project-name" title="${p.project}">${name}</div>
       <div class="project-bar-bg"><div class="project-bar-fill" style="width:${pct}%"></div></div>
       <div class="project-cost">$${p.cost.toFixed(3)}</div>
@@ -403,22 +624,16 @@ function renderCost() {
   `;
 }
 
-function renderFeed() {
-  const items = [...state.history].reverse();
-  if (!items.length) {
-    document.getElementById('tabContent').innerHTML = '<div class="no-data">No history yet</div>';
-    return;
-  }
-
-  // Cost is attached to each history entry server-side by build.js
-  // (enrichHistory). Entries whose transcript has been cleaned up show '—'.
-  const html = items.map(h => {
+// Shared feed item renderer used by both Overview and Command Feed tabs
+function renderFeedItems(items) {
+  if (!items.length) return '';
+  return `<div class="feed">${items.map(h => {
     const d = new Date(h.timestamp);
     const proj = (h.project || '').split('/').slice(-2).join('/');
 
     let pill;
     if (typeof h.cost !== 'number') {
-      pill = `<span class="cost-pill na" title="No transcript data — session may have been cleaned up or this is an interrupted prompt">—</span>`;
+      pill = `<span class="cost-pill na" title="No transcript data">—</span>`;
     } else {
       const cost = h.cost;
       const turns = h.turns || 0;
@@ -440,8 +655,44 @@ function renderFeed() {
         <span style="color:var(--muted);font-size:10px">${h.sessionId?.slice(0, 8)}…</span>
       </div>
     </div>`;
-  }).join('');
-  document.getElementById('tabContent').innerHTML = `<div class="feed">${html}</div>`;
+  }).join('')}</div>`;
+}
+
+function renderFeed() {
+  const items = filterBySearch(filteredHistory().reverse());
+  const searchVal = escHtml(state.feedSearch);
+  const searchBox = `<div style="margin-bottom:12px"><input type="text" id="feedSearchInput" placeholder="Search commands..." value="${searchVal}" oninput="onFeedSearch(this.value)" style="width:100%;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;outline:none;font-family:inherit;" /></div>`;
+  if (!items.length) {
+    document.getElementById('tabContent').innerHTML = searchBox + '<div class="no-data">No matching commands</div>';
+    return;
+  }
+  document.getElementById('tabContent').innerHTML = searchBox + renderFeedItems(items);
+  // Restore cursor position
+  const inp = document.getElementById('feedSearchInput');
+  if (inp) { inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length; }
+}
+
+function onFeedSearch(val) {
+  state.feedSearch = val;
+  renderFeed();
+}
+
+function onFeedSearchOverview(val) {
+  state.feedSearch = val;
+  renderOverview();
+  // Restore focus and cursor
+  const inp = document.getElementById('feedSearchInput');
+  if (inp) { inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length; }
+}
+
+function filterBySearch(items) {
+  const q = (state.feedSearch || '').trim().toLowerCase();
+  if (!q) return items;
+  return items.filter(h => {
+    const text = (h.display || '').toLowerCase();
+    const proj = (h.project || '').toLowerCase();
+    return text.includes(q) || proj.includes(q);
+  });
 }
 
 function renderTools() {
@@ -489,7 +740,20 @@ function fmtNum(n) {
 }
 
 function escHtml(s) {
-  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escAttr(s) {
+  return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+}
+
+function formatSessionDate(d) {
+  const today = new Date().toISOString().slice(0, 10);
+  const dateStr = d.toISOString().slice(0, 10);
+  if (dateStr === today) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 function formatRelative(d) {
