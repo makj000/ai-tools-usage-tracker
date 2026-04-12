@@ -351,9 +351,17 @@ function build() {
   console.log(`[build] history costs attached: ${enrichResult.matched} matched, ${enrichResult.unmatched} unmatched`);
 }
 
-build();
+// Export internals for testing; skip build when required as a module.
+if (typeof module !== "undefined" && module.exports && require.main !== module) {
+  module.exports = {
+    getPricing, calcCost, zeroCounts, addCounts, slugToPath,
+    isRealPrompt, extractPromptText, enrichHistory, readJsonl,
+  };
+} else {
+  build();
+}
 
-if (process.argv.includes("--watch")) {
+if (require.main === module && process.argv.includes("--watch")) {
   console.log("[build] watching for changes... (Ctrl+C to stop)");
   let timer = null;
   const debounced = () => { clearTimeout(timer); timer = setTimeout(build, 800); };

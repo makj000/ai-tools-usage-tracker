@@ -4,6 +4,7 @@
   "description": "Track Claude Code commands and token usage — open report.html in any browser",
   "scripts": {
     "build": "node scripts/build.js",
-    "watch": "node scripts/build.js --watch"
+    "watch": "node scripts/build.js --watch",
+    "test": "node test/build.test.js && python3 test/log_hook.test.py"
   }
 }
