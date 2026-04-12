@@ -268,6 +268,207 @@ function enrichHistory(history, prompts) {
   return { matched, unmatched };
 }
 
+// --- Rate-limit / window usage detection ---
+// Scan all transcripts for `error:"rate_limit"` entries and assistant usage,
+// then compute: (a) learned window boundaries, (b) historical ceiling at each
+// limit hit, (c) current window usage, (d) estimated % of limit used.
+
+function toLADate(isoStr) {
+  // Convert ISO timestamp to LA-local date parts
+  const d = new Date(isoStr);
+  const la = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).formatToParts(d);
+  const p = {};
+  for (const { type, value } of la) p[type] = value;
+  return {
+    year: +p.year, month: +p.month, day: +p.day,
+    hour: +p.hour, minute: +p.minute, second: +p.second,
+    epoch: d.getTime(),
+  };
+}
+
+function laEpoch(year, month, day, hour) {
+  // Build a Date for the given LA-local hour, return epoch ms.
+  // We use a trick: construct in UTC, then adjust by the TZ offset.
+  const isoGuess = `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}T${String(hour).padStart(2,"0")}:00:00`;
+  // Use Intl to find the actual offset
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles", timeZoneName: "shortOffset",
+  });
+  const guessDate = new Date(isoGuess + "Z");
+  // Get LA time at guessDate to find offset
+  const laParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(guessDate);
+  const laH = +laParts.find(p => p.type === "hour").value;
+  const diff = laH - hour;
+  // Adjust
+  return guessDate.getTime() - diff * 3600000;
+}
+
+function buildWindowUsage() {
+  if (!fs.existsSync(PROJECTS_DIR)) return null;
+
+  // Pass 1: collect all assistant usage entries and rate_limit entries
+  const usageEntries = [];   // { ts (ISO), epoch, cost }
+  const rateLimitHits = [];  // { ts, epoch, resetHour }
+
+  const projectDirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
+    .filter(d => d.isDirectory()).map(d => d.name);
+
+  for (const slug of projectDirs) {
+    const projectPath = path.join(PROJECTS_DIR, slug);
+    const files = fs.readdirSync(projectPath).filter(f => f.endsWith(".jsonl"));
+    for (const file of files) {
+      try {
+        const lines = fs.readFileSync(path.join(projectPath, file), "utf8").split("\n").filter(Boolean);
+        for (const line of lines) {
+          let entry;
+          try { entry = JSON.parse(line); } catch { continue; }
+
+          // Rate limit hit
+          if (entry.error === "rate_limit" && entry.timestamp) {
+            let resetHour = null;
+            const content = entry.message?.content;
+            let text = "";
+            if (Array.isArray(content)) {
+              const t = content.find(c => c && c.type === "text");
+              if (t) text = t.text || "";
+            } else if (typeof content === "string") {
+              text = content;
+            }
+            const m = text.match(/resets?\s+(\d+)(am|pm)/i);
+            if (m) {
+              let h = parseInt(m[1]);
+              if (m[2].toLowerCase() === "pm" && h !== 12) h += 12;
+              if (m[2].toLowerCase() === "am" && h === 12) h = 0;
+              resetHour = h;
+            }
+            rateLimitHits.push({
+              ts: entry.timestamp,
+              epoch: new Date(entry.timestamp).getTime(),
+              resetHour,
+            });
+            continue;
+          }
+
+          // Assistant usage
+          if (entry.type === "assistant" && entry.message?.usage && entry.timestamp) {
+            const model = entry.message.model;
+            if (!model || model === "<synthetic>") continue;
+            const cost = calcCost(entry.message.usage, model);
+            usageEntries.push({
+              ts: entry.timestamp,
+              epoch: new Date(entry.timestamp).getTime(),
+              cost,
+            });
+          }
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  if (!rateLimitHits.length) return null;
+
+  // Derive window boundaries from reset hours
+  const resetHours = [...new Set(rateLimitHits.map(r => r.resetHour).filter(h => h !== null))].sort((a, b) => a - b);
+  if (!resetHours.length) return null;
+
+  // Sort usage by time for binary-search-like window sums
+  usageEntries.sort((a, b) => a.epoch - b.epoch);
+
+  // For a given epoch, find which window it falls in and the window start epoch
+  function findWindowStart(epoch) {
+    const la = toLADate(new Date(epoch).toISOString());
+    // Find the most recent boundary hour that has passed
+    let startHour = resetHours[resetHours.length - 1]; // wrap to previous day
+    let startDay = la.day;
+    let startMonth = la.month;
+    let startYear = la.year;
+    for (let i = resetHours.length - 1; i >= 0; i--) {
+      if (resetHours[i] <= la.hour) {
+        startHour = resetHours[i];
+        break;
+      }
+    }
+    if (startHour > la.hour) {
+      // Wrapped to yesterday's last boundary
+      const yesterday = new Date(epoch - 86400000);
+      const yLA = toLADate(yesterday.toISOString());
+      startDay = yLA.day;
+      startMonth = yLA.month;
+      startYear = yLA.year;
+    }
+    return laEpoch(startYear, startMonth, startDay, startHour);
+  }
+
+  // Sum usage cost between two epochs
+  function sumCostBetween(startEpoch, endEpoch) {
+    let total = 0;
+    for (const u of usageEntries) {
+      if (u.epoch >= startEpoch && u.epoch < endEpoch) total += u.cost;
+    }
+    return total;
+  }
+
+  // Compute ceiling at each rate_limit hit (usage from window start to hit time).
+  // Deduplicate: multiple hits in the same window (user retried) count as one
+  // data point — keep only the first hit per window start.
+  const seenWindows = new Set();
+  const ceilings = [];
+  for (const hit of rateLimitHits) {
+    const winStart = findWindowStart(hit.epoch);
+    const winKey = String(winStart);
+    if (seenWindows.has(winKey)) continue;
+    seenWindows.add(winKey);
+    const cost = sumCostBetween(winStart, hit.epoch);
+    if (cost > 0) {
+      ceilings.push({
+        ts: hit.ts,
+        resetHour: hit.resetHour,
+        cost,
+      });
+    }
+  }
+
+  // Use median ceiling for robustness against outliers (e.g. a session with
+  // a huge compaction/cache fill that inflates one window's equiv. cost).
+  const sortedCosts = ceilings.map(c => c.cost).sort((a, b) => a - b);
+  const medianCeiling = sortedCosts.length
+    ? sortedCosts.length % 2 === 1
+      ? sortedCosts[Math.floor(sortedCosts.length / 2)]
+      : (sortedCosts[sortedCosts.length / 2 - 1] + sortedCosts[sortedCosts.length / 2]) / 2
+    : null;
+
+  // Current window
+  const now = Date.now();
+  const currentWindowStart = findWindowStart(now);
+  const currentUsage = sumCostBetween(currentWindowStart, now);
+
+  // Find next boundary for display
+  const laNow = toLADate(new Date(now).toISOString());
+  let nextBoundaryHour = resetHours.find(h => h > laNow.hour);
+  if (nextBoundaryHour === undefined) nextBoundaryHour = resetHours[0]; // wraps to tomorrow
+  const windowStartLA = toLADate(new Date(currentWindowStart).toISOString());
+
+  return {
+    resetHours,
+    windowStartHour: windowStartLA.hour,
+    windowStartTs: new Date(currentWindowStart).toISOString(),
+    nextResetHour: nextBoundaryHour,
+    currentUsage,
+    medianCeiling,
+    pctUsed: medianCeiling ? Math.min(currentUsage / medianCeiling, 1.5) : null,
+    ceilings: ceilings.map(c => ({ ts: c.ts, cost: +c.cost.toFixed(4) })),
+    totalHits: rateLimitHits.length,
+  };
+}
+
 function buildStats(events) {
   const history = readJsonl(HISTORY_PATH);
 
@@ -332,12 +533,15 @@ function build() {
   const enrichResult = enrichHistory(history, tokens._prompts);
   delete tokens._prompts; // internal, don't ship
 
+  const windowUsage = buildWindowUsage();
+
   const data = {
     generatedAt: new Date().toISOString(),
     tokens,
     stats: buildStats(fresh.events),
     history,
     events: fresh.events,
+    windowUsage,
     maintenance: {
       eventFiles: fresh.rotated,
       oldFiles: fresh.oldFiles.map(f => f.name),
@@ -355,7 +559,7 @@ function build() {
 if (typeof module !== "undefined" && module.exports && require.main !== module) {
   module.exports = {
     getPricing, calcCost, zeroCounts, addCounts, slugToPath,
-    isRealPrompt, extractPromptText, enrichHistory, readJsonl,
+    isRealPrompt, extractPromptText, enrichHistory, readJsonl, toLADate,
   };
 } else {
   build();

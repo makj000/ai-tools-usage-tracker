@@ -127,6 +127,20 @@
 
   .no-data { color: var(--muted); font-size: 13px; padding: 40px; text-align: center; }
 
+  /* Window usage gauge */
+  .window-gauge { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  .window-gauge .wg-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .window-gauge .wg-title { font-size: 13px; font-weight: 600; color: var(--accent); }
+  .window-gauge .wg-meta { font-size: 11px; color: var(--muted); }
+  .window-gauge .wg-bar-bg { width: 100%; height: 10px; background: var(--border); border-radius: 5px; overflow: hidden; position: relative; }
+  .window-gauge .wg-bar-fill { height: 100%; border-radius: 5px; transition: width 0.4s; }
+  .window-gauge .wg-bar-fill.low { background: var(--green); }
+  .window-gauge .wg-bar-fill.mid { background: var(--accent); }
+  .window-gauge .wg-bar-fill.high { background: var(--red); }
+  .window-gauge .wg-stats { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; }
+  .window-gauge .wg-stats .wg-current { font-weight: 700; }
+  .window-gauge .wg-stats .wg-ceiling { color: var(--muted); }
+
   .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
   .tab { padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; transition: color 0.1s; }
   .tab.active { color: var(--text); border-bottom-color: var(--accent); }
@@ -492,6 +506,42 @@ function renderSidebar() {
   }).join('');
 }
 
+function renderWindowGauge() {
+  const w = window.TRACKER_DATA?.windowUsage;
+  if (!w || w.medianCeiling === null) return '';
+
+  const pct = w.pctUsed !== null ? Math.round(w.pctUsed * 100) : 0;
+  const barPct = Math.min(pct, 100);
+  const cls = pct < 50 ? 'low' : pct < 85 ? 'mid' : 'high';
+
+  const fmtHour = h => {
+    const suffix = h >= 12 ? 'pm' : 'am';
+    const hr = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return hr + suffix;
+  };
+
+  const windowLabel = `${fmtHour(w.windowStartHour)} – ${fmtHour(w.nextResetHour)} PT`;
+  const hitsLabel = `${w.totalHits} limit hits observed`;
+
+  const ceilStr = '$' + w.medianCeiling.toFixed(2);
+  const usedStr = '$' + w.currentUsage.toFixed(2);
+  const pctStr = pct + '%';
+
+  return `<div class="window-gauge">
+    <div class="wg-header">
+      <span class="wg-title">Window Usage Estimate</span>
+      <span class="wg-meta">${windowLabel} · ${hitsLabel}</span>
+    </div>
+    <div class="wg-bar-bg">
+      <div class="wg-bar-fill ${cls}" style="width:${barPct}%"></div>
+    </div>
+    <div class="wg-stats">
+      <span class="wg-current" style="color:var(--${cls === 'low' ? 'green' : cls === 'mid' ? 'accent' : 'red'})">${usedStr} used (${pctStr})</span>
+      <span class="wg-ceiling">est. limit: ${ceilStr} equiv. (median of ${w.ceilings.length} windows)</span>
+    </div>
+  </div>`;
+}
+
 function renderOverview() {
   const s = state.stats;
   const t = state.tokens;
@@ -546,6 +596,7 @@ function renderOverview() {
   const feedHtml = renderFeedItems(filterBySearch(filteredHistory().reverse()).slice(0, 20));
 
   document.getElementById('tabContent').innerHTML = `
+    ${renderWindowGauge()}
     <div class="stat-grid">
       <div class="stat"><div class="label">Extra Usage (equiv.)</div><div class="value green">$${monthCost.toFixed(2)}</div><div class="sub">this month · at API rates</div></div>
       <div class="stat"><div class="label">Today (equiv.)</div><div class="value green">$${todayCost.toFixed(4)}</div><div class="sub">${todayPrompts} prompts</div></div>
