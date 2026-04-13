@@ -102,6 +102,20 @@
   .feed-item .cost-pill.na   { background: rgba(139,148,158,0.08); color: var(--muted); font-weight: 500; }
   .feed-item .prompt-meta { font-size: 11px; color: var(--muted); margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
   .feed-item .project { color: var(--blue); }
+  .feed-item { cursor: pointer; }
+  .feed-item:hover { border-color: var(--muted); }
+
+  /* Turn details table */
+  .turn-table { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 11px; }
+  .turn-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .turn-table td { padding: 4px 8px; border-bottom: 1px solid rgba(48,54,61,0.4); }
+  .turn-table tr:last-child td { border-bottom: none; }
+  .turn-table .turn-num { color: var(--muted); width: 30px; }
+  .turn-table .turn-time { color: var(--muted); }
+  .turn-table .turn-model { color: var(--purple); }
+  .turn-table .turn-cost { color: var(--green); font-weight: 600; text-align: right; }
+  .turn-table .turn-extra { color: var(--red); font-size: 9px; font-weight: 600; }
+  .turn-table .turn-tokens { color: var(--muted); text-align: right; }
   .tag { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: 600; }
   .tag.tool { background: rgba(88, 166, 255, 0.15); color: var(--blue); }
   .tag.bash { background: rgba(63, 185, 80, 0.15); color: var(--green); }
@@ -209,6 +223,7 @@ let state = {
   activeTab: localStorage.getItem('claude-tracker-tab') || 'overview',
   filterProject: localStorage.getItem('claude-tracker-filterProject') || null,
   filterDay: localStorage.getItem('claude-tracker-filterDay') || null,
+  filterSession: localStorage.getItem('claude-tracker-filterSession') || null,
   feedSearch: '',
 };
 
@@ -233,6 +248,7 @@ function buildProjectDayMap() {
 function filteredHistory() {
   return state.history.filter(h => {
     if (state.filterProject && h.project !== state.filterProject) return false;
+    if (state.filterSession && h.sessionId !== state.filterSession) return false;
     if (state.filterDay) {
       const d = h.timestamp ? new Date(h.timestamp).toISOString().slice(0, 10) : null;
       if (d !== state.filterDay) return false;
@@ -256,11 +272,12 @@ function filteredSessions() {
   });
 }
 
-function hasFilters() { return state.filterProject || state.filterDay; }
+function hasFilters() { return state.filterProject || state.filterDay || state.filterSession; }
 
 function setFilter(opts) {
   if ('project' in opts) state.filterProject = opts.project;
   if ('day' in opts) state.filterDay = opts.day;
+  if ('session' in opts) state.filterSession = opts.session;
   persistFilters();
   renderFilterBar();
   renderSidebar();
@@ -270,6 +287,7 @@ function setFilter(opts) {
 function clearFilters() {
   state.filterProject = null;
   state.filterDay = null;
+  state.filterSession = null;
   persistFilters();
   renderFilterBar();
   renderSidebar();
@@ -281,10 +299,22 @@ function persistFilters() {
   else localStorage.removeItem('claude-tracker-filterProject');
   if (state.filterDay) localStorage.setItem('claude-tracker-filterDay', state.filterDay);
   else localStorage.removeItem('claude-tracker-filterDay');
+  if (state.filterSession) localStorage.setItem('claude-tracker-filterSession', state.filterSession);
+  else localStorage.removeItem('claude-tracker-filterSession');
 }
+
+function clearFilterSession() { setFilter({ session: null }); }
 
 function clearFilterProject() { setFilter({ project: null }); }
 function clearFilterDay() { setFilter({ day: null }); }
+
+function onSessionClick(sessionId) {
+  if (state.filterSession === sessionId) {
+    setFilter({ session: null });
+  } else {
+    setFilter({ session: sessionId });
+  }
+}
 
 // --- chart builder (with click-to-filter) ---
 function buildChart(labels, values, fmt, barClass, chartId) {
@@ -429,6 +459,9 @@ function renderFilterBar() {
     const name = state.filterProject.split('/').slice(-2).join('/') || state.filterProject;
     tags += `<span class="filter-tag">Project: ${escHtml(name)} <span class="remove" onclick="clearFilterProject()">&times;</span></span>`;
   }
+  if (state.filterSession) {
+    tags += `<span class="filter-tag">Session: ${state.filterSession.slice(0, 8)}… <span class="remove" onclick="clearFilterSession()">&times;</span></span>`;
+  }
   if (state.filterDay) {
     tags += `<span class="filter-tag">Day: ${state.filterDay} <span class="remove" onclick="clearFilterDay()">&times;</span></span>`;
   }
@@ -498,7 +531,8 @@ function renderSidebar() {
     const when = s.lastTs ? formatSessionDate(new Date(s.lastTs)) : '—';
     const proj = (s.project || '').split('/').slice(-2).join('/');
     const cost = s.cost || 0;
-    return `<div class="session-item">
+    const active = state.filterSession === s.sessionId ? ' active' : '';
+    return `<div class="session-item${active}" onclick="onSessionClick('${s.sessionId}')">
       <div class="project">${proj || s.project}</div>
       <div class="preview">${s.sessionId.slice(0, 8)}… · ${s.counts?.messages || 0} turns</div>
       <div class="meta"><span class="cost-badge">$${cost.toFixed(4)}</span><span>${when}</span></div>
@@ -506,39 +540,204 @@ function renderSidebar() {
   }).join('');
 }
 
+function fmtHour(h) {
+  const suffix = h >= 12 ? 'pm' : 'am';
+  const hr = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return hr + suffix;
+}
+
+function renderUsageBar(label, meta, usage, ceiling, dataPoints, staleNote) {
+  if (ceiling === null || ceiling === undefined) return '';
+  const pct = Math.round(Math.min(usage / ceiling, 1.5) * 100);
+  const barPct = Math.min(pct, 100);
+  const cls = pct < 50 ? 'low' : pct < 85 ? 'mid' : 'high';
+  const colorVar = cls === 'low' ? 'green' : cls === 'mid' ? 'accent' : 'red';
+  const stale = staleNote ? ` <span style="color:var(--muted);font-size:10px">${staleNote}</span>` : '';
+  return `<div style="margin-bottom:6px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+      <span style="font-size:12px;font-weight:600;color:var(--text)">${label}</span>
+      <span style="font-size:10px;color:var(--muted)">${meta}</span>
+    </div>
+    <div class="wg-bar-bg"><div class="wg-bar-fill ${cls}" style="width:${barPct}%"></div></div>
+    <div style="display:flex;justify-content:space-between;margin-top:2px;font-size:10px">
+      <span style="color:var(--${colorVar});font-weight:600">$${usage.toFixed(2)} (${pct}%)${stale}</span>
+      <span style="color:var(--muted)">est. limit: $${ceiling.toFixed(2)} (${dataPoints} samples)</span>
+    </div>
+  </div>`;
+}
+
 function renderWindowGauge() {
   const w = window.TRACKER_DATA?.windowUsage;
   if (!w || w.medianCeiling === null) return '';
 
-  const pct = w.pctUsed !== null ? Math.round(w.pctUsed * 100) : 0;
-  const barPct = Math.min(pct, 100);
-  const cls = pct < 50 ? 'low' : pct < 85 ? 'mid' : 'high';
+  // Compute the CURRENT window client-side from resetHours + local clock,
+  // so the label is always correct even if data.js is stale.
+  const hours = w.resetHours || [];
+  const nowLA = new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", hour12: false });
+  const nowHour = parseInt(nowLA);
+  let startHour = hours[hours.length - 1];
+  let nextHour = hours[0];
+  for (let i = hours.length - 1; i >= 0; i--) {
+    if (hours[i] <= nowHour) {
+      startHour = hours[i];
+      nextHour = hours[(i + 1) % hours.length];
+      break;
+    }
+  }
 
-  const fmtHour = h => {
-    const suffix = h >= 12 ? 'pm' : 'am';
-    const hr = h === 0 ? 12 : h > 12 ? h - 12 : h;
-    return hr + suffix;
-  };
+  const windowMatch = startHour === w.windowStartHour;
+  const windowUsage = windowMatch ? w.currentUsage : 0;
+  const windowStale = windowMatch ? '' : '(stale — rebuild needed)';
+  const windowLabel = `${fmtHour(startHour)} – ${fmtHour(nextHour)} PT`;
 
-  const windowLabel = `${fmtHour(w.windowStartHour)} – ${fmtHour(w.nextResetHour)} PT`;
-  const hitsLabel = `${w.totalHits} limit hits observed`;
+  const bars = [];
+  bars.push(renderUsageBar(
+    'Window', windowLabel + ' · ' + w.totalHits + ' hits observed',
+    windowUsage, w.medianCeiling, w.ceilings.length, windowStale
+  ));
 
-  const ceilStr = '$' + w.medianCeiling.toFixed(2);
-  const usedStr = '$' + w.currentUsage.toFixed(2);
-  const pctStr = pct + '%';
+  if (w.daily && w.daily.ceiling) {
+    bars.push(renderUsageBar(
+      'Daily', w.daily.date,
+      w.daily.usage, w.daily.ceiling, w.daily.dataPoints, ''
+    ));
+  }
+
+  if (w.weekly && w.weekly.ceiling) {
+    bars.push(renderUsageBar(
+      'Weekly', w.weekly.week,
+      w.weekly.usage, w.weekly.ceiling, w.weekly.dataPoints, ''
+    ));
+  }
+
+  if (w.monthly && w.monthly.ceiling) {
+    bars.push(renderUsageBar(
+      'Monthly', w.monthly.month,
+      w.monthly.usage, w.monthly.ceiling, w.monthly.dataPoints, ''
+    ));
+  }
 
   return `<div class="window-gauge">
     <div class="wg-header">
-      <span class="wg-title">Window Usage Estimate</span>
-      <span class="wg-meta">${windowLabel} · ${hitsLabel}</span>
+      <span class="wg-title">Usage Limits Estimate</span>
+      <span class="wg-meta">auto-detected from ${w.totalHits} rate-limit events</span>
     </div>
-    <div class="wg-bar-bg">
-      <div class="wg-bar-fill ${cls}" style="width:${barPct}%"></div>
+    ${bars.join('')}
+  </div>`;
+}
+
+// --- Extra credit balance management ---
+// Stored in localStorage as total purchased amount. Balance = purchased - consumed.
+function getExtraPurchased() {
+  return parseFloat(localStorage.getItem('claude-tracker-extraPurchased') || '0');
+}
+function setExtraPurchased(val) {
+  localStorage.setItem('claude-tracker-extraPurchased', String(Math.max(0, val)));
+}
+function adjustExtraCredit() {
+  const current = getExtraPurchased();
+  const input = prompt(
+    `Enter the amount to ADD to your extra credit balance.\n` +
+    `(e.g. "10" to add $10 of purchased credit)\n\n` +
+    `Current total purchased: $${current.toFixed(2)}`,
+    ''
+  );
+  if (input === null || input.trim() === '') return;
+  const amount = parseFloat(input);
+  if (isNaN(amount)) { alert('Invalid number'); return; }
+  if (amount < 0) {
+    // Allow negative to correct mistakes
+    if (!confirm(`Subtract $${Math.abs(amount).toFixed(2)} from purchased total?`)) return;
+  }
+  setExtraPurchased(current + amount);
+  renderTab(state.activeTab);
+}
+function resetExtraCredit() {
+  if (!confirm('Reset total purchased extra credit to $0?')) return;
+  setExtraPurchased(0);
+  renderTab(state.activeTab);
+}
+
+function renderExtraGauge() {
+  const t = state.tokens;
+  if (!t || !t.extraPerDay) return '';
+
+  const extraTotal = t.extraTotals?.cost || 0;
+  if (extraTotal === 0) return '';
+
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const thisMonth = todayKey.slice(0, 7);
+
+  // This month's extra
+  const monthExtra = Object.entries(t.extraPerDay)
+    .filter(([d]) => d.startsWith(thisMonth))
+    .reduce((sum, [, v]) => sum + v.cost, 0);
+
+  // Calculate days with extra usage this month
+  const extraDays = Object.keys(t.extraPerDay).filter(d => d.startsWith(thisMonth)).length;
+  const daysInMonth = new Date(+thisMonth.slice(0,4), +thisMonth.slice(5,7), 0).getDate();
+  const dayOfMonth = +todayKey.slice(8, 10);
+
+  // Project monthly run rate: (extra so far / days elapsed) * days in month
+  const projectedMonth = dayOfMonth > 0 ? (monthExtra / dayOfMonth) * daysInMonth : 0;
+
+  // Bar: show month extra relative to subscription cost ($20) for context
+  const subCost = 20;
+  const pct = Math.round(Math.min(monthExtra / subCost, 2) * 100);
+  const barPct = Math.min(pct, 100);
+  const cls = monthExtra < 5 ? 'low' : monthExtra < 15 ? 'mid' : 'high';
+
+  // Sparkline of daily extra this month
+  const days = [];
+  for (let i = 0; i < dayOfMonth; i++) {
+    const d = new Date(+thisMonth.slice(0,4), +thisMonth.slice(5,7) - 1, i + 1);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  const dailyVals = days.map(d => t.extraPerDay[d]?.cost || 0);
+  const maxDaily = Math.max(...dailyVals, 0.01);
+  const sparkBars = dailyVals.map((v, i) => {
+    const h = Math.max(v > 0 ? 2 : 0, Math.round((v / maxDaily) * 20));
+    const tip = `${days[i]}: $${v.toFixed(2)}`;
+    return `<div title="${tip}" style="flex:1;display:flex;align-items:flex-end;justify-content:center;height:20px"><div style="width:100%;height:${h}px;background:var(--red);opacity:0.7;border-radius:1px"></div></div>`;
+  }).join('');
+
+  // Balance tracking
+  const purchased = getExtraPurchased();
+  const remaining = purchased - extraTotal;
+  const hasBalance = purchased > 0;
+  const balanceColor = remaining <= 0 ? 'var(--red)' : remaining < 5 ? 'var(--accent)' : 'var(--green)';
+
+  // If purchased credit exists, show bar as consumed/purchased instead of vs subscription
+  let barFill, barLabel, barRight;
+  if (hasBalance) {
+    const balPct = purchased > 0 ? Math.round(Math.min(extraTotal / purchased, 1.5) * 100) : 0;
+    const balBarPct = Math.min(balPct, 100);
+    const balCls = balPct < 50 ? 'low' : balPct < 85 ? 'mid' : 'high';
+    barFill = `<div class="wg-bar-fill ${balCls}" style="width:${balBarPct}%;background:var(--red)"></div>`;
+    barLabel = `<span class="wg-current" style="color:${balanceColor}">$${remaining.toFixed(2)} remaining (${balPct}% used)</span>`;
+    barRight = `<span class="wg-ceiling">$${extraTotal.toFixed(2)} used of $${purchased.toFixed(2)} purchased</span>`;
+  } else {
+    barFill = `<div class="wg-bar-fill ${cls}" style="width:${barPct}%;background:var(--red)"></div>`;
+    barLabel = `<span class="wg-current" style="color:var(--red)">$${monthExtra.toFixed(2)} this month (${pct}% of $${subCost} subscription)</span>`;
+    barRight = `<span class="wg-ceiling">projected: ~$${projectedMonth.toFixed(2)}/mo at current pace</span>`;
+  }
+
+  return `<div class="window-gauge">
+    <div class="wg-header">
+      <span class="wg-title" style="color:var(--red)">Extra Credit Usage</span>
+      <span class="wg-meta" style="display:flex;align-items:center;gap:8px">
+        <span>${thisMonth} · ${extraDays} days with extra</span>
+        <button onclick="adjustExtraCredit()" style="padding:2px 8px;font-size:10px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer">+ Add credit</button>
+        ${hasBalance ? '<button onclick="resetExtraCredit()" style="padding:2px 6px;font-size:10px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer">Reset</button>' : ''}
+      </span>
     </div>
+    <div class="wg-bar-bg">${barFill}</div>
     <div class="wg-stats">
-      <span class="wg-current" style="color:var(--${cls === 'low' ? 'green' : cls === 'mid' ? 'accent' : 'red'})">${usedStr} used (${pctStr})</span>
-      <span class="wg-ceiling">est. limit: ${ceilStr} equiv. (median of ${w.ceilings.length} windows)</span>
+      ${barLabel}
+      ${barRight}
     </div>
+    <div style="display:flex;gap:1px;margin-top:8px;padding:0 2px">${sparkBars}</div>
+    <div style="font-size:9px;color:var(--muted);margin-top:2px;text-align:center">daily extra credit · ${thisMonth}</div>
   </div>`;
 }
 
@@ -579,8 +778,12 @@ function renderOverview() {
 
   const todayCost = costValues[costValues.length - 1] || 0;
   const todayPrompts = activityValues[activityValues.length - 1] || 0;
+  const todayExtra = t.extraPerDay?.[todayKey]?.cost || 0;
 
   const thisMonth = todayKey.slice(0, 7);
+  const extraMonth = Object.entries(t.extraPerDay || {})
+    .filter(([d]) => d.startsWith(thisMonth))
+    .reduce((sum, [, v]) => sum + v.cost, 0);
   let monthCost;
   if (state.filterProject) {
     monthCost = Object.entries(pdMap[state.filterProject] || {})
@@ -597,12 +800,13 @@ function renderOverview() {
 
   document.getElementById('tabContent').innerHTML = `
     ${renderWindowGauge()}
+    ${renderExtraGauge()}
     <div class="stat-grid">
-      <div class="stat"><div class="label">Extra Usage (equiv.)</div><div class="value green">$${monthCost.toFixed(2)}</div><div class="sub">this month · at API rates</div></div>
-      <div class="stat"><div class="label">Today (equiv.)</div><div class="value green">$${todayCost.toFixed(4)}</div><div class="sub">${todayPrompts} prompts</div></div>
+      <div class="stat"><div class="label">Extra Credit Used</div><div class="value red">$${extraMonth.toFixed(2)}</div><div class="sub">this month · actual extra charges</div></div>
+      <div class="stat"><div class="label">Today (equiv.)</div><div class="value green">$${todayCost.toFixed(4)}</div><div class="sub">${todayPrompts} prompts${todayExtra > 0 ? ' · <span style="color:var(--red)">$' + todayExtra.toFixed(2) + ' extra</span>' : ''}</div></div>
       <div class="stat"><div class="label">Input Tokens</div><div class="value blue">${fmtNum(totals.input_tokens)}</div><div class="sub">non-cached</div></div>
       <div class="stat"><div class="label">Output Tokens</div><div class="value blue">${fmtNum(totals.output_tokens)}</div><div class="sub">${fmtNum(totals.messages)} turns</div></div>
-      <div class="stat"><div class="label">Cache Reads</div><div class="value purple">${fmtNum(totals.cache_read_input_tokens)}</div><div class="sub">${fmtNum(totals.cache_creation_input_tokens)} written</div></div>
+      <div class="stat"><div class="label">All-time Extra</div><div class="value red">$${(t.extraTotals?.cost || 0).toFixed(2)}</div><div class="sub">${t.extraTotals?.messages || 0} turns after limit</div></div>
     </div>
     <div class="chart-wrap">
       <h3>Activity — last 14 days (prompts)${state.filterProject ? ' · filtered' : ''}</h3>
@@ -675,12 +879,58 @@ function renderCost() {
   `;
 }
 
+// Track which feed items are expanded (by index in the rendered list)
+if (!state.expandedFeedItems) state.expandedFeedItems = new Set();
+
+function toggleFeedItem(id) {
+  if (state.expandedFeedItems.has(id)) {
+    state.expandedFeedItems.delete(id);
+  } else {
+    state.expandedFeedItems.add(id);
+  }
+  // Re-render the current tab
+  renderTab(state.activeTab);
+}
+
+function renderTurnDetails(turnDetails) {
+  if (!turnDetails || !turnDetails.length) return '<div style="padding:8px;color:var(--muted);font-size:11px">No turn data available</div>';
+
+  const shortModel = m => {
+    if (m.includes('opus')) return 'opus';
+    if (m.includes('haiku')) return 'haiku';
+    if (m.includes('sonnet')) return 'sonnet';
+    return m.slice(0, 12);
+  };
+
+  const rows = turnDetails.map((t, i) => {
+    const time = t.ts ? new Date(t.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+    const costStr = t.cost < 0.001 ? '$' + t.cost.toFixed(5) : '$' + t.cost.toFixed(4);
+    const extraTag = t.extra ? '<span class="turn-extra"> EXTRA</span>' : '';
+    return `<tr>
+      <td class="turn-num">${i + 1}</td>
+      <td class="turn-time">${time}</td>
+      <td class="turn-model">${shortModel(t.model)}</td>
+      <td class="turn-tokens">${fmtNum(t.in)} in</td>
+      <td class="turn-tokens">${fmtNum(t.out)} out</td>
+      <td class="turn-tokens">${fmtNum(t.cr)} cache</td>
+      <td class="turn-cost">${costStr}${extraTag}</td>
+    </tr>`;
+  }).join('');
+
+  return `<table class="turn-table">
+    <tr><th>#</th><th>Time</th><th>Model</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cost</th></tr>
+    ${rows}
+  </table>`;
+}
+
 // Shared feed item renderer used by both Overview and Command Feed tabs
 function renderFeedItems(items) {
   if (!items.length) return '';
-  return `<div class="feed">${items.map(h => {
+  return `<div class="feed">${items.map((h, idx) => {
     const d = new Date(h.timestamp);
     const proj = (h.project || '').split('/').slice(-2).join('/');
+    const itemId = (h.sessionId || '') + '_' + h.timestamp;
+    const isExpanded = state.expandedFeedItems.has(itemId);
 
     let pill;
     if (typeof h.cost !== 'number') {
@@ -691,13 +941,19 @@ function renderFeedItems(items) {
       const cls = cost === 0 ? 'zero' : cost < 0.01 ? '' : cost < 0.10 ? 'mid' : 'high';
       const label = cost === 0 ? '$0.00' : cost < 0.01 ? '$' + cost.toFixed(4) : '$' + cost.toFixed(3);
       const c = h.tokenCounts || {};
-      const tip = `${turns} turn${turns === 1 ? '' : 's'}  ·  ${fmtNum(c.input_tokens)} in  ·  ${fmtNum(c.output_tokens)} out  ·  ${fmtNum(c.cache_read_input_tokens)} cache read  ·  ${fmtNum(c.cache_creation_input_tokens)} cache write`;
-      pill = `<span class="cost-pill ${cls}" title="${tip}">${label}<span style="font-weight:400;opacity:0.7"> · ${turns}t</span></span>`;
+      const extraCost = h.extraCost || 0;
+      const extraNote = extraCost > 0 ? `  ·  $${extraCost.toFixed(3)} EXTRA CREDIT` : '';
+      const tip = `${turns} turn${turns === 1 ? '' : 's'}  ·  ${fmtNum(c.input_tokens)} in  ·  ${fmtNum(c.output_tokens)} out  ·  ${fmtNum(c.cache_read_input_tokens)} cache read  ·  ${fmtNum(c.cache_creation_input_tokens)} cache write${extraNote}`;
+      const extraBadge = extraCost > 0 ? '<span style="color:var(--red);font-size:9px;margin-left:4px">EXTRA</span>' : '';
+      pill = `<span class="cost-pill ${cls}" title="${tip}">${label}<span style="font-weight:400;opacity:0.7"> · ${turns}t</span>${extraBadge}</span>`;
     }
 
-    return `<div class="feed-item">
+    const expandIcon = h.turnDetails && h.turnDetails.length ? `<span style="color:var(--muted);font-size:10px;margin-right:4px">${isExpanded ? '▼' : '▶'}</span>` : '';
+    const details = isExpanded ? renderTurnDetails(h.turnDetails) : '';
+
+    return `<div class="feed-item" onclick="toggleFeedItem('${itemId}')">
       <div class="feed-head">
-        <div class="prompt-text">${escHtml(h.display || '')}</div>
+        ${expandIcon}<div class="prompt-text">${escHtml(h.display || '')}</div>
         ${pill}
       </div>
       <div class="prompt-meta">
@@ -705,6 +961,7 @@ function renderFeedItems(items) {
         <span>${d.toLocaleString()}</span>
         <span style="color:var(--muted);font-size:10px">${h.sessionId?.slice(0, 8)}…</span>
       </div>
+      ${details}
     </div>`;
   }).join('')}</div>`;
 }

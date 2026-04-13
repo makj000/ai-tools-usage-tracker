@@ -120,13 +120,77 @@ function extractPromptText(entry) {
   return "";
 }
 
+// Collect all rate_limit hit timestamps across transcripts (first pass).
+// Returns sorted array of epoch timestamps. Used by readAllTranscripts to
+// classify each assistant turn as subscription-covered vs extra-credit.
+function collectRateLimitEpochs() {
+  if (!fs.existsSync(PROJECTS_DIR)) return [];
+  const epochs = [];
+  const dirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
+  for (const slug of dirs) {
+    const dp = path.join(PROJECTS_DIR, slug);
+    const files = fs.readdirSync(dp).filter(f => f.endsWith(".jsonl"));
+    for (const f of files) {
+      try {
+        const data = fs.readFileSync(path.join(dp, f), "utf8");
+        // Quick string check before parsing every line
+        if (!data.includes("rate_limit")) continue;
+        for (const line of data.split("\n")) {
+          if (!line || !line.includes("rate_limit")) continue;
+          try {
+            const e = JSON.parse(line);
+            if (e.error === "rate_limit" && e.timestamp) {
+              epochs.push(new Date(e.timestamp).getTime());
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+  }
+  return epochs.sort((a, b) => a - b);
+}
+
 function readAllTranscripts() {
-  if (!fs.existsSync(PROJECTS_DIR)) return { sessions: {}, perDay: {}, perProject: {}, totals: zeroCounts(), prompts: [] };
+  if (!fs.existsSync(PROJECTS_DIR)) return { sessions: {}, perDay: {}, perProject: {}, totals: zeroCounts(), prompts: [], extraTotals: zeroCounts() };
+
+  // Pre-collect rate_limit timestamps so we can classify turns as extra credit.
+  const rateLimitEpochs = collectRateLimitEpochs();
+
+  // For a given assistant turn epoch, check if it falls after a rate_limit hit
+  // within the same window. If so, it's extra credit usage.
+  // We cache window lookups since findWindowStart is somewhat expensive.
+  const windowStartCache = new Map();
+  function getWindowStart(epoch) {
+    // Quantize to minute-level for caching
+    const key = Math.floor(epoch / 60000);
+    if (windowStartCache.has(key)) return windowStartCache.get(key);
+    const ws = _findWindowStartForExtra(epoch);
+    windowStartCache.set(key, ws);
+    return ws;
+  }
+
+  function isExtraCredit(turnEpoch) {
+    if (!rateLimitEpochs.length) return false;
+    const winStart = getWindowStart(turnEpoch);
+    // Is there a rate_limit hit in [winStart, turnEpoch)?
+    // Binary search for first rate_limit >= winStart
+    let lo = 0, hi = rateLimitEpochs.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (rateLimitEpochs[mid] < winStart) lo = mid + 1;
+      else hi = mid;
+    }
+    // lo is now the first rate_limit >= winStart
+    return lo < rateLimitEpochs.length && rateLimitEpochs[lo] < turnEpoch;
+  }
 
   const sessions = {};
   const perDay = {};
   const perProject = {};
   const totals = zeroCounts();
+  const extraTotals = zeroCounts();
+  const extraPerDay = {};
+  const extraPerProject = {};
   const prompts = [];
 
   const projectDirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
@@ -158,7 +222,9 @@ function readAllTranscripts() {
               project: projectName,
               text,
               cost: 0,
+              extraCost: 0,
               turns: 0,
+              turnDetails: [],
               counts: zeroCounts(),
             };
             // messages counter in zeroCounts() is meant for assistant turns;
@@ -176,12 +242,15 @@ function readAllTranscripts() {
           const cost = calcCost(usage, model);
           const ts = entry.timestamp;
           const day = ts ? ts.slice(0, 10) : "unknown";
+          const turnEpoch = ts ? new Date(ts).getTime() : 0;
+          const extra = isExtraCredit(turnEpoch);
 
           if (!sessions[sessionId]) {
-            sessions[sessionId] = { sessionId, project: projectName, model, counts: zeroCounts(), cost: 0, firstTs: ts, lastTs: ts };
+            sessions[sessionId] = { sessionId, project: projectName, model, counts: zeroCounts(), cost: 0, extraCost: 0, firstTs: ts, lastTs: ts };
           }
           addCounts(sessions[sessionId].counts, usage);
           sessions[sessionId].cost += cost;
+          if (extra) sessions[sessionId].extraCost += cost;
           if (ts < sessions[sessionId].firstTs) sessions[sessionId].firstTs = ts;
           if (ts > sessions[sessionId].lastTs) sessions[sessionId].lastTs = ts;
 
@@ -196,18 +265,40 @@ function readAllTranscripts() {
           addCounts(totals, usage);
           totals.cost = (totals.cost || 0) + cost;
 
+          if (extra) {
+            addCounts(extraTotals, usage);
+            extraTotals.cost = (extraTotals.cost || 0) + cost;
+
+            if (!extraPerDay[day]) extraPerDay[day] = { cost: 0 };
+            extraPerDay[day].cost += cost;
+
+            if (!extraPerProject[projectName]) extraPerProject[projectName] = { cost: 0 };
+            extraPerProject[projectName].cost += cost;
+          }
+
           // Attribute this assistant turn to the in-flight prompt bucket.
           if (currentPrompt) {
             addCounts(currentPrompt.counts, usage);
             currentPrompt.cost += cost;
+            if (extra) currentPrompt.extraCost += cost;
             currentPrompt.turns += 1;
+            currentPrompt.turnDetails.push({
+              ts,
+              model: model || 'unknown',
+              cost,
+              extra,
+              in: usage.input_tokens || 0,
+              out: usage.output_tokens || 0,
+              cw: usage.cache_creation_input_tokens || 0,
+              cr: usage.cache_read_input_tokens || 0,
+            });
           }
         }
       } catch { /* skip */ }
     }
   }
 
-  return { sessions, perDay, perProject, totals, prompts };
+  return { sessions, perDay, perProject, totals, prompts, extraTotals, extraPerDay, extraPerProject };
 }
 
 function buildTokens() {
@@ -220,6 +311,9 @@ function buildTokens() {
     .sort((a, b) => b.cost - a.cost);
   return {
     totals: data.totals,
+    extraTotals: data.extraTotals,
+    extraPerDay: data.extraPerDay || {},
+    extraPerProject: data.extraPerProject || {},
     sessions: sessionList,
     perDay: data.perDay,
     projects: projectList,
@@ -258,14 +352,76 @@ function enrichHistory(history, prompts) {
     if (queue && queue.length) {
       const p = queue.shift();
       h.cost = p.cost;
+      h.extraCost = p.extraCost || 0;
       h.turns = p.turns;
       h.tokenCounts = p.counts;
+      h.turnDetails = p.turnDetails || [];
       matched++;
     } else {
       unmatched++;
     }
   }
   return { matched, unmatched };
+}
+
+// --- Rate-limit window helpers ---
+// Known reset hours — derived from rate_limit messages. Cached after first
+// call to buildWindowUsage(). For the initial pass (collectRateLimitEpochs →
+// readAllTranscripts), we pre-derive them.
+let _cachedResetHours = null;
+
+function deriveResetHours() {
+  if (_cachedResetHours) return _cachedResetHours;
+  if (!fs.existsSync(PROJECTS_DIR)) return [];
+  const hours = new Set();
+  const dirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
+  for (const slug of dirs) {
+    const dp = path.join(PROJECTS_DIR, slug);
+    const files = fs.readdirSync(dp).filter(f => f.endsWith(".jsonl"));
+    for (const f of files) {
+      try {
+        const data = fs.readFileSync(path.join(dp, f), "utf8");
+        if (!data.includes("rate_limit")) continue;
+        for (const line of data.split("\n")) {
+          if (!line || !line.includes("rate_limit")) continue;
+          try {
+            const e = JSON.parse(line);
+            if (e.error !== "rate_limit") continue;
+            const content = e.message?.content;
+            let text = "";
+            if (Array.isArray(content)) { const t = content.find(c => c && c.type === "text"); if (t) text = t.text || ""; }
+            else if (typeof content === "string") text = content;
+            const m = text.match(/resets?\s+(\d+)(am|pm)/i);
+            if (m) {
+              let h = parseInt(m[1]);
+              if (m[2].toLowerCase() === "pm" && h !== 12) h += 12;
+              if (m[2].toLowerCase() === "am" && h === 12) h = 0;
+              hours.add(h);
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+  }
+  _cachedResetHours = [...hours].sort((a, b) => a - b);
+  return _cachedResetHours;
+}
+
+function _findWindowStartForExtra(epoch) {
+  const resetHours = deriveResetHours();
+  if (!resetHours.length) return 0;
+  const la = toLADate(new Date(epoch).toISOString());
+  let startHour = resetHours[resetHours.length - 1];
+  let startDay = la.day, startMonth = la.month, startYear = la.year;
+  for (let i = resetHours.length - 1; i >= 0; i--) {
+    if (resetHours[i] <= la.hour) { startHour = resetHours[i]; break; }
+  }
+  if (startHour > la.hour) {
+    const yesterday = new Date(epoch - 86400000);
+    const yLA = toLADate(yesterday.toISOString());
+    startDay = yLA.day; startMonth = yLA.month; startYear = yLA.year;
+  }
+  return laEpoch(startYear, startMonth, startDay, startHour);
 }
 
 // --- Rate-limit / window usage detection ---
@@ -456,16 +612,111 @@ function buildWindowUsage() {
   if (nextBoundaryHour === undefined) nextBoundaryHour = resetHours[0]; // wraps to tomorrow
   const windowStartLA = toLADate(new Date(currentWindowStart).toISOString());
 
+  // --- Daily / Weekly / Monthly ceilings ---
+  // Helper: compute median of a number array
+  function median(arr) {
+    if (!arr.length) return null;
+    const s = [...arr].sort((a, b) => a - b);
+    return s.length % 2 === 1
+      ? s[Math.floor(s.length / 2)]
+      : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+  }
+
+  // Build per-day cost map from usage entries
+  const dailyCosts = {};
+  for (const u of usageEntries) {
+    const day = u.ts.slice(0, 10);
+    dailyCosts[day] = (dailyCosts[day] || 0) + u.cost;
+  }
+
+  // Days that had at least one rate_limit hit → daily ceiling data points
+  const hitDays = new Set();
+  for (const hit of rateLimitHits) hitDays.add(hit.ts.slice(0, 10));
+  const dailyCeilingValues = [...hitDays].map(d => dailyCosts[d] || 0).filter(c => c > 0);
+  const dailyCeiling = median(dailyCeilingValues);
+
+  // Current day usage (LA date)
+  const todayLA = `${laNow.year}-${String(laNow.month).padStart(2,"0")}-${String(laNow.day).padStart(2,"0")}`;
+  const dailyUsage = dailyCosts[todayLA] || 0;
+
+  // --- Weekly ---
+  // ISO week key from a date string
+  function weekKey(dateStr) {
+    const d = new Date(dateStr + "T12:00:00Z");
+    const dayOfWeek = d.getUTCDay() || 7; // Mon=1 .. Sun=7
+    d.setUTCDate(d.getUTCDate() + 4 - dayOfWeek); // nearest Thursday
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+  }
+
+  // Per-week costs
+  const weeklyCosts = {};
+  for (const [day, cost] of Object.entries(dailyCosts)) {
+    const wk = weekKey(day);
+    weeklyCosts[wk] = (weeklyCosts[wk] || 0) + cost;
+  }
+
+  // Weeks with hits
+  const hitWeeks = new Set();
+  for (const d of hitDays) hitWeeks.add(weekKey(d));
+  const weeklyCeilingValues = [...hitWeeks].map(w => weeklyCosts[w] || 0).filter(c => c > 0);
+  const weeklyCeiling = median(weeklyCeilingValues);
+
+  // Current week
+  const currentWeek = weekKey(todayLA);
+  const weeklyUsage = weeklyCosts[currentWeek] || 0;
+
+  // --- Monthly ---
+  const monthlyCosts = {};
+  for (const [day, cost] of Object.entries(dailyCosts)) {
+    const mo = day.slice(0, 7);
+    monthlyCosts[mo] = (monthlyCosts[mo] || 0) + cost;
+  }
+
+  const hitMonths = new Set();
+  for (const d of hitDays) hitMonths.add(d.slice(0, 7));
+  const monthlyCeilingValues = [...hitMonths].map(m => monthlyCosts[m] || 0).filter(c => c > 0);
+  const monthlyCeiling = median(monthlyCeilingValues);
+
+  const currentMonth = todayLA.slice(0, 7);
+  const monthlyUsage = monthlyCosts[currentMonth] || 0;
+
   return {
     resetHours,
     windowStartHour: windowStartLA.hour,
     windowStartTs: new Date(currentWindowStart).toISOString(),
     nextResetHour: nextBoundaryHour,
+    // Per-window
     currentUsage,
     medianCeiling,
     pctUsed: medianCeiling ? Math.min(currentUsage / medianCeiling, 1.5) : null,
     ceilings: ceilings.map(c => ({ ts: c.ts, cost: +c.cost.toFixed(4) })),
     totalHits: rateLimitHits.length,
+    // Daily
+    daily: {
+      usage: dailyUsage,
+      ceiling: dailyCeiling,
+      pct: dailyCeiling ? Math.min(dailyUsage / dailyCeiling, 1.5) : null,
+      dataPoints: dailyCeilingValues.length,
+      date: todayLA,
+    },
+    // Weekly
+    weekly: {
+      usage: weeklyUsage,
+      ceiling: weeklyCeiling,
+      pct: weeklyCeiling ? Math.min(weeklyUsage / weeklyCeiling, 1.5) : null,
+      dataPoints: weeklyCeilingValues.length,
+      week: currentWeek,
+    },
+    // Monthly
+    monthly: {
+      usage: monthlyUsage,
+      ceiling: monthlyCeiling,
+      pct: monthlyCeiling ? Math.min(monthlyUsage / monthlyCeiling, 1.5) : null,
+      dataPoints: monthlyCeilingValues.length,
+      month: currentMonth,
+    },
   };
 }
 
