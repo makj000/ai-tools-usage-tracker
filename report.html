@@ -188,7 +188,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v2.4.0</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v2.5.0</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -618,11 +618,13 @@ function renderWindowGauge() {
     ));
   }
 
-  if (w.monthly && w.monthly.ceiling) {
-    bars.push(renderUsageBar(
-      'Monthly', w.monthly.month,
-      w.monthly.usage, w.monthly.ceiling, w.monthly.dataPoints, ''
-    ));
+  let monthlyRow = '';
+  if (w.monthly && w.monthly.usage > 0) {
+    monthlyRow = `<div style="margin-bottom:6px;display:flex;justify-content:space-between;align-items:baseline">
+      <span style="font-size:12px;font-weight:600;color:var(--text)">Monthly</span>
+      <span style="font-size:10px;color:var(--muted)">${w.monthly.month}</span>
+      <span style="font-size:11px;font-weight:600;color:var(--blue)">$${w.monthly.usage.toFixed(2)}</span>
+    </div>`;
   }
 
   return `<div class="window-gauge">
@@ -630,7 +632,7 @@ function renderWindowGauge() {
       <span class="wg-title">Usage Limits Estimate</span>
       <span class="wg-meta">auto-detected from ${w.totalHits} rate-limit events</span>
     </div>
-    ${bars.join('')}
+    ${bars.join('')}${monthlyRow}
   </div>`;
 }
 

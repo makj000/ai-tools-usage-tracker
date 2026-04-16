@@ -95,6 +95,7 @@ claude-tracker/
 - Uses **median** ceiling (robust against outliers like large compaction sessions)
 - Deduplicates same-window retries
 - **Weekly window resets on Thursday mornings** — `weekKey()` in build.js groups dates into Thu–Wed weeks, keyed by the Thursday start date (YYYY-MM-DD format)
+- **Monthly has no known ceiling** — shown as a plain number (no bar/percentage), blue text only
 
 ### Runtime Config (`data/config.json`)
 
