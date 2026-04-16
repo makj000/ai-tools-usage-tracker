@@ -11,6 +11,7 @@ const path = require("path");
 const ROOT = path.dirname(__dirname);
 const DATA_DIR = path.join(ROOT, "data");
 const OUTPUT = path.join(ROOT, "data.js");
+const CONFIG_PATH = path.join(DATA_DIR, "config.json");
 const HISTORY_PATH = path.join(os.homedir(), ".claude", "history.jsonl");
 const PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
 
@@ -640,14 +641,15 @@ function buildWindowUsage() {
   const dailyUsage = dailyCosts[todayLA] || 0;
 
   // --- Weekly ---
-  // ISO week key from a date string
+  // Week key based on Thursday reset: weeks run Thu–Wed.
+  // Returns the date string (YYYY-MM-DD) of the Thursday that started the week.
   function weekKey(dateStr) {
     const d = new Date(dateStr + "T12:00:00Z");
-    const dayOfWeek = d.getUTCDay() || 7; // Mon=1 .. Sun=7
-    d.setUTCDate(d.getUTCDate() + 4 - dayOfWeek); // nearest Thursday
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-    return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+    // getUTCDay(): Sun=0, Mon=1, ..., Thu=4, ..., Wed=3
+    // Distance back to most-recent Thursday: (day - 4 + 7) % 7
+    const daysBack = (d.getUTCDay() - 4 + 7) % 7;
+    d.setUTCDate(d.getUTCDate() - daysBack);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`;
   }
 
   // Per-week costs
@@ -786,8 +788,12 @@ function build() {
 
   const windowUsage = buildWindowUsage();
 
+  const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")) : {};
+  if (config.extraSpentOverride != null) tokens.extraTotals.cost = config.extraSpentOverride;
+
   const data = {
     generatedAt: new Date().toISOString(),
+    ...(config.extraPurchasedSeed != null ? { extraPurchasedSeed: config.extraPurchasedSeed } : {}),
     tokens,
     stats: buildStats(fresh.events),
     history,

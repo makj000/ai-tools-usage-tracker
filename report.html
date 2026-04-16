@@ -188,7 +188,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v2.1.0</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v2.4.0</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -637,7 +637,9 @@ function renderWindowGauge() {
 // --- Extra credit balance management ---
 // Stored in localStorage as total purchased amount. Balance = purchased - consumed.
 function getExtraPurchased() {
-  return parseFloat(localStorage.getItem('claude-tracker-extraPurchased') || '0');
+  const stored = localStorage.getItem('claude-tracker-extraPurchased');
+  if (stored !== null) return parseFloat(stored);
+  return window.TRACKER_DATA?.extraPurchasedSeed || 0;
 }
 function setExtraPurchased(val) {
   localStorage.setItem('claude-tracker-extraPurchased', String(Math.max(0, val)));
@@ -830,7 +832,7 @@ function renderOverview() {
     </div>
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <h3 style="margin-bottom:0">Recent Commands${hasFilters() ? ' (filtered)' : ''}</h3>
+        <h3 style="margin-bottom:0">Recent Prompts${hasFilters() ? ' (filtered)' : ''}</h3>
         <input type="text" id="feedSearchInput" placeholder="Search..." value="${escHtml(state.feedSearch)}" oninput="onFeedSearchOverview(this.value)" style="width:200px;padding:5px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;outline:none;font-family:inherit;" />
       </div>
       ${feedHtml || '<div class="no-data">No matching commands</div>'}
