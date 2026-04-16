@@ -71,7 +71,7 @@ claude-tracker/
 - **Top row** (two-column grid):
   - Left: Stat cards — Extra Credit Used, Today (equiv.), Input Tokens, Output Tokens, All-time Extra
   - Right: Usage Limits Estimate (window/daily/weekly/monthly bars) + Extra Credit Usage gauge with sparkline
-- **Charts**: Activity (prompts/day) and Cost ($/day) bar charts, last 14 days, clickable to filter by day
+- **Chart**: Single dual-bar chart, last 14 days — amber bar = prompts, green bar = cost; each series scaled independently to its own max; clicking a day column filters by that day (whole column highlights, not individual bars)
 - **Recent Prompts**: Searchable list with cost pills, turn counts, expand/collapse for per-turn details table
 
 #### Token Usage Tab

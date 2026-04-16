@@ -85,11 +85,13 @@
   .grid-line { border-top: 1px dashed rgba(48,54,61,0.8); width: 100%; }
   .chart { display: flex; align-items: flex-end; gap: 3px; height: 100px; }
   .bar-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; flex: 1; cursor: pointer; }
-  .bar-col.active-bar .bar { opacity: 1; box-shadow: 0 0 6px rgba(88,166,255,0.5); }
+  .bar-col.active-bar { background: rgba(88,166,255,0.08); border-radius: 3px; }
+  .bar-col.active-bar .bar { opacity: 1; }
+  .bar-col.active-bar .bar-label { color: var(--blue); }
   .bar-val { font-size: 8px; color: var(--muted); margin-bottom: 2px; white-space: nowrap; }
-  .bar { background: var(--accent); opacity: 0.75; width: 100%; border-radius: 2px 2px 0 0; min-height: 1px; transition: opacity 0.2s, box-shadow 0.2s; }
+  .bar { background: var(--accent); opacity: 0.75; width: 100%; border-radius: 2px 2px 0 0; min-height: 1px; transition: opacity 0.2s; }
   .bar.green { background: var(--green); }
-  .bar:hover { opacity: 1; }
+  .bar-col:hover .bar { opacity: 1; }
   .bar-label { font-size: 9px; color: var(--muted); margin-top: 3px; }
 
   .feed { display: flex; flex-direction: column; gap: 8px; }
@@ -188,7 +190,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v2.5.0</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v2.6.2</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -323,32 +325,38 @@ function onSessionClick(sessionId) {
   }
 }
 
-// --- chart builder (with click-to-filter) ---
-function buildChart(labels, values, fmt, barClass, chartId) {
+// --- dual-bar chart builder (activity + cost, click-to-filter by day) ---
+function buildDualChart(labels, aValues, bValues, fmtA, fmtB) {
   const CHART_H = 100;
-  const maxVal = Math.max(...values, 0.0001);
-  const mid = maxVal / 2;
-  const yTop = fmt(maxVal);
-  const yMid = fmt(mid);
+  const maxA = Math.max(...aValues, 0.0001);
+  const maxB = Math.max(...bValues, 0.0001);
 
   const bars = labels.map((lbl, i) => {
-    const v = values[i] || 0;
-    const h = Math.max(v > 0 ? 2 : 0, Math.round((v / maxVal) * CHART_H));
-    const showVal = v > 0 ? fmt(v) : '';
+    const a = aValues[i] || 0;
+    const b = bValues[i] || 0;
+    const hA = Math.max(a > 0 ? 2 : 0, Math.round((a / maxA) * CHART_H));
+    const hB = Math.max(b > 0 ? 2 : 0, Math.round((b / maxB) * CHART_H));
     const dateLabel = lbl.length === 10 ? lbl.slice(5).replace('-', '/') : lbl;
     const activeClass = state.filterDay === lbl ? 'active-bar' : '';
-    return `<div class="bar-col ${activeClass}" title="${lbl}: ${fmt(v)}" onclick="onBarClick('${lbl}')">
-      <div class="bar-val">${showVal}</div>
-      <div class="bar ${barClass}" style="height:${h}px"></div>
+    const tip = `${lbl}: ${fmtA(a)} prompts · ${fmtB(b)}`;
+    return `<div class="bar-col ${activeClass}" title="${tip}" onclick="onBarClick('${lbl}')">
+      <div style="display:flex;align-items:flex-end;gap:1px;width:100%;height:${CHART_H}px">
+        <div class="bar" style="height:${hA}px;flex:1"></div>
+        <div class="bar green" style="height:${hB}px;flex:1"></div>
+      </div>
       <div class="bar-label">${dateLabel}</div>
     </div>`;
   }).join('');
 
-  return `<div class="chart-outer">
-    <div class="y-axis"><span>${yTop}</span><span>${yMid}</span><span>0</span></div>
+  const legend = `<div style="display:flex;gap:12px;font-size:10px;color:var(--muted);margin-bottom:4px">
+    <span><span style="display:inline-block;width:8px;height:8px;background:var(--accent);border-radius:1px;margin-right:3px;opacity:0.75"></span>prompts</span>
+    <span><span style="display:inline-block;width:8px;height:8px;background:var(--green);border-radius:1px;margin-right:3px;opacity:0.75"></span>cost (each scaled to max)</span>
+  </div>`;
+
+  return `${legend}<div class="chart-outer">
     <div class="chart-inner">
       <div class="grid-lines"><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div></div>
-      <div class="chart">${bars}</div>
+      <div class="chart" style="gap:4px">${bars}</div>
     </div>
   </div>`;
 }
@@ -825,12 +833,8 @@ function renderOverview() {
       </div>
     </div>
     <div class="chart-wrap">
-      <h3>Activity — last 14 days (prompts)${state.filterProject ? ' · filtered' : ''}</h3>
-      ${buildChart(days, activityValues, v => String(Math.round(v)), '', 'activity')}
-    </div>
-    <div class="chart-wrap">
-      <h3>Equiv. extra usage cost — last 14 days (USD)${state.filterProject ? ' · filtered' : ''}</h3>
-      ${buildChart(days, costValues, v => v >= 1 ? '$' + v.toFixed(1) : v > 0 ? '$' + v.toFixed(2) : '0', 'green', 'cost')}
+      <h3>Activity & Cost — last 14 days${state.filterProject ? ' · filtered' : ''}</h3>
+      ${buildDualChart(days, activityValues, costValues, v => String(Math.round(v)), v => v >= 1 ? '$' + v.toFixed(1) : v > 0 ? '$' + v.toFixed(2) : '$0')}
     </div>
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
