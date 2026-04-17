@@ -49,7 +49,8 @@
   .section-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 12px 16px 6px; }
 
   /* Sidebar project list */
-  .sidebar-project { padding: 8px 16px; cursor: pointer; border-bottom: 1px solid var(--border); transition: background 0.1s; display: flex; align-items: center; gap: 8px; user-select: none; }
+  .sidebar-project { padding: 8px 16px; cursor: pointer; border-bottom: 1px solid var(--border); transition: background 0.1s; display: flex; flex-direction: column; gap: 3px; user-select: none; }
+  .sidebar-project .sp-row { display: flex; align-items: center; gap: 8px; }
   .sidebar-project:hover { background: rgba(255,255,255,0.04); }
   .sidebar-project.active { background: rgba(88,166,255,0.08); border-left: 2px solid var(--blue); padding-left: 14px; }
   .sidebar-project .sp-name { font-size: 12px; color: var(--blue); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -205,7 +206,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v2.9.0</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.0.0</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -543,10 +544,14 @@ function renderSidebar() {
       const name = p.project.split('/').slice(-2).join('/') || p.project;
       const pct = Math.round((p.cost / maxCost) * 100);
       const active = state.filterProject === p.project ? 'active' : '';
+      const tokLine = p.counts ? `<div style="font-size:10px;color:var(--muted)">${fmtNum(p.counts.input_tokens)} in · ${fmtNum(p.counts.output_tokens)} out</div>` : '';
       return `<div class="sidebar-project ${active}" onclick="onProjectClick('${escAttr(p.project)}')" title="Double-click to jump to Token Usage">
-        <div class="sp-name" title="${escHtml(p.project)}">${escHtml(name)}</div>
-        <div class="sp-bar"><div class="sp-bar-fill" style="width:${pct}%"></div></div>
-        <div class="sp-cost">$${p.cost.toFixed(2)}</div>
+        <div class="sp-row">
+          <div class="sp-name" title="${escHtml(p.project)}">${escHtml(name)}</div>
+          <div class="sp-bar"><div class="sp-bar-fill" style="width:${pct}%"></div></div>
+          <div class="sp-cost">$${p.cost.toFixed(2)}</div>
+        </div>
+        ${tokLine}
       </div>`;
     }).join('');
   }
@@ -566,7 +571,7 @@ function renderSidebar() {
     return `<div class="session-item${active}" onclick="onSessionClick('${s.sessionId}')">
       <div class="project">${proj || s.project}</div>
       <div class="preview">${s.sessionId.slice(0, 8)}… · ${s.counts?.messages || 0} turns</div>
-      <div class="meta"><span class="cost-badge">$${cost.toFixed(4)}</span><span>${when}</span></div>
+      <div class="meta"><span class="cost-badge">$${cost.toFixed(4)}</span><span style="color:var(--muted)">${fmtNum(s.counts?.input_tokens||0)} in · ${fmtNum(s.counts?.output_tokens||0)} out</span><span>${when}</span></div>
     </div>`;
   }).join('');
 }
@@ -643,6 +648,7 @@ function renderWindowGauge() {
           <span class="win-t-start">${fmtHour(ww.startHour)}</span>
           <span class="win-t-end">${fmtHour(ww.endHour)}</span>
         </div>
+        ${pct > 0 ? `<div style="font-size:9px;color:var(--muted);text-align:center">${Math.round(pct)}%</div>` : ''}
       </div>`;
     }).join('');
     const staleNote = windowStale ? ` <span style="color:var(--muted);font-size:10px">${windowStale}</span>` : '';
@@ -664,16 +670,17 @@ function renderWindowGauge() {
     const wk = w.weekly;
     const dayNames = ['Thu','Fri','Sat','Sun','Mon','Tue','Wed'];
     if (wk.weekDays && wk.weekDays.length === 7) {
+      const dayAllotment = w.daily?.ceiling || (wk.ceiling / 7);
       const wkSegs = wk.weekDays.map((wd, i) => {
         const isFirst = i === 0, isLast = i === 6;
-        const pct = Math.min(wd.usage / wk.ceiling, 1) * 100;
+        const pct = Math.min(wd.usage / dayAllotment, 1) * 100;
         const fillCls = pct < 50 ? 'low' : pct < 85 ? 'mid' : 'high';
         const opacity = wd.isPast ? 0.4 : wd.isCurrent ? 1 : 0.55;
         const br = isFirst ? '4px 0 0 4px' : isLast ? '0 4px 4px 0' : '0';
         const gap = isLast ? '' : 'margin-right:1px';
         const curCls = wd.isCurrent ? ' wk-current' : '';
         const mmdd = wd.date.slice(5).replace('-', '/');
-        return `<div class="wk-slot${curCls}" style="opacity:${opacity};${gap}" title="${dayNames[i]} ${mmdd}: $${wd.usage.toFixed(2)}">
+        return `<div class="wk-slot${curCls}" style="opacity:${opacity};${gap}" title="${dayNames[i]} ${mmdd}: $${wd.usage.toFixed(2)} / $${dayAllotment.toFixed(2)} daily (${Math.round(pct)}%)">
           <div class="wk-bar-part" style="border-radius:${br}">
             <div class="wg-bar-fill ${fillCls}" style="width:${pct.toFixed(1)}%;height:100%;border-radius:${br}"></div>
           </div>
@@ -683,7 +690,7 @@ function renderWindowGauge() {
       bars.push(`<div style="margin-bottom:6px">
         <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
           <span style="font-size:12px;font-weight:600;color:var(--text)">Weekly</span>
-          <span style="font-size:10px;color:var(--muted)">${wk.week} · est. $${wk.ceiling.toFixed(2)} ceiling (${wk.dataPoints} samples)</span>
+          <span style="font-size:10px;color:var(--muted)">${wk.week} · est. $${wk.ceiling.toFixed(2)} ceiling (${wk.dataPoints} samples)${wk.pct !== null ? ` · <span style="font-weight:600;color:var(--text)">${Math.round(wk.pct*100)}%</span>` : ''}</span>
         </div>
         <div style="display:flex;width:100%">${wkSegs}</div>
       </div>`);

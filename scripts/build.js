@@ -623,16 +623,20 @@ function buildWindowUsage() {
       : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
   }
 
-  // Build per-day cost map from usage entries
+  // Build per-day cost map from usage entries — use LA date, not UTC
   const dailyCosts = {};
   for (const u of usageEntries) {
-    const day = u.ts.slice(0, 10);
+    const la = toLADate(u.ts);
+    const day = `${la.year}-${String(la.month).padStart(2,"0")}-${String(la.day).padStart(2,"0")}`;
     dailyCosts[day] = (dailyCosts[day] || 0) + u.cost;
   }
 
-  // Days that had at least one rate_limit hit → daily ceiling data points
+  // Days that had at least one rate_limit hit → daily ceiling data points (LA date)
   const hitDays = new Set();
-  for (const hit of rateLimitHits) hitDays.add(hit.ts.slice(0, 10));
+  for (const hit of rateLimitHits) {
+    const la = toLADate(hit.ts);
+    hitDays.add(`${la.year}-${String(la.month).padStart(2,"0")}-${String(la.day).padStart(2,"0")}`);
+  }
   const dailyCeilingValues = [...hitDays].map(d => dailyCosts[d] || 0).filter(c => c > 0);
   const dailyCeiling = median(dailyCeilingValues);
 
