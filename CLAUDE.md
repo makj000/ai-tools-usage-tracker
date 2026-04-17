@@ -60,8 +60,8 @@ claude-tracker/
 
 - **Header**: Title, version, absolute timestamp of data freshness, monthly cost total
 - **Sidebar** (left, 280px):
-  - Top Projects list (clickable: single-click = filter, double-click = jump to Token Usage tab)
-  - Sessions list sorted by equiv. cost (clickable = filter by session)
+  - Top Projects list — shows cost bar + `$X.XX` + `Xk in · Xk out` tokens (clickable: single-click = filter, double-click = jump to Token Usage tab)
+  - Sessions list sorted by equiv. cost — shows cost, `Xk in · Xk out` tokens, and date (clickable = filter by session)
 - **Main area** (right):
   - Filter bar (shown when any filter is active, with tag chips and reset button)
   - Three tabs: Overview, Token Usage, Tool Usage
@@ -82,6 +82,13 @@ claude-tracker/
 
 - Tool frequency grid, per-tool counts
 
+### Timezone Handling
+
+- All date/time logic uses **America/Los_Angeles** (PT) via `Intl.DateTimeFormat`
+- `toLADate(isoStr)` — converts any ISO timestamp to LA date parts `{year, month, day, hour, ...}`; normalizes `hour: 24` (midnight quirk) to `0`
+- `laEpoch(year, month, day, hour)` — converts an LA date+hour back to a UTC epoch ms; uses a modulo-aware diff `((laH - hour) % 24 + 24) % 24` (clamped to ±12h) to avoid the naive subtraction landing on the previous day when `hour = 0`
+- `dailyCosts` and `hitDays` in `buildWindowUsage` use LA date (not UTC slice) to prevent post-5pm PT usage from leaking into the next calendar day
+
 ### Rate Limit Detection
 
 - Scans transcripts for `error: "rate_limit"` entries
@@ -94,8 +101,9 @@ claude-tracker/
 - Collects cost-at-hit for each rate limit event per tier (window, daily, weekly, monthly)
 - Uses **median** ceiling (robust against outliers like large compaction sessions)
 - Deduplicates same-window retries
+- **Window bar is segmented** — one slot per detected reset-hour for today (widths proportional to hours); fill = usage vs. median ceiling; past slots faded to 40%; current at full opacity; hover highlights start/end timestamps and shows usage % below each slot; falls back to plain `renderUsageBar` if `todayWindows` data is missing
 - **Weekly window resets on Thursday mornings** — `weekKey()` in build.js groups dates into Thu–Wed weeks, keyed by the Thursday start date (YYYY-MM-DD format)
-- **Weekly bar is segmented** — 7 equal slots (Thu–Wed), each showing that day's usage vs. the weekly ceiling; current day has a blue outline + label; past days faded to 40%; future days at 55% opacity; hover highlights the slot and shows day name + date + cost in tooltip
+- **Weekly bar is segmented** — 7 equal slots (Thu–Wed), each showing that day's usage vs. the **daily ceiling** (not weekly); segment is full when the day's allotment is exhausted regardless of weekly budget remaining; current day has blue outline + label; past days faded to 40%; future days at 55%; overall weekly % shown in the header; tooltip shows `Day MM/DD: $X.XX / $Y.YY daily (Z%)`
 - **Daily bar is hidden** — daily estimated cap shown as inline text in the "Est. cap" row alongside the monthly spend
 - **Monthly has no known ceiling** — shown as a plain number (no bar/percentage), blue text only
 
