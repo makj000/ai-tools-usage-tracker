@@ -462,9 +462,10 @@ function laEpoch(year, month, day, hour) {
     year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", hour12: false,
   }).formatToParts(guessDate);
-  const laH = +laParts.find(p => p.type === "hour").value;
-  const diff = laH - hour;
-  // Adjust
+  const laH = +laParts.find(p => p.type === "hour").value % 24; // normalize 24→0 at midnight
+  // Modulo-aware diff: pick the shortest path so hour=0 doesn't wrap to previous day
+  let diff = ((laH - hour) % 24 + 24) % 24;
+  if (diff > 12) diff -= 24;
   return guessDate.getTime() - diff * 3600000;
 }
 
