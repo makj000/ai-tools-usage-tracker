@@ -171,6 +171,13 @@
   .win-slot .win-t-end { visibility: hidden; color: var(--muted); }
   .win-slot:hover .win-t-start { color: var(--text); font-weight: 700; }
   .win-slot:hover .win-t-end { visibility: visible; color: var(--text); font-weight: 700; }
+  .wk-slot { display: flex; flex-direction: column; min-width: 0; cursor: default; flex: 1; }
+  .wk-bar-part { height: 10px; background: var(--border); position: relative; overflow: hidden; }
+  .wk-slot:hover .wk-bar-part { filter: brightness(1.4); }
+  .wk-slot.wk-current .wk-bar-part { outline: 1px solid var(--blue); outline-offset: 1px; }
+  .wk-day-label { font-size: 9px; color: var(--muted); text-align: center; padding-top: 2px; }
+  .wk-slot:hover .wk-day-label { color: var(--text); font-weight: 700; }
+  .wk-slot.wk-current .wk-day-label { color: var(--blue); }
 
   .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
   .tab { padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; transition: color 0.1s; }
@@ -198,7 +205,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v2.8.0</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v2.9.0</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -654,10 +661,35 @@ function renderWindowGauge() {
   }
 
   if (w.weekly && w.weekly.ceiling) {
-    bars.push(renderUsageBar(
-      'Weekly', w.weekly.week,
-      w.weekly.usage, w.weekly.ceiling, w.weekly.dataPoints, ''
-    ));
+    const wk = w.weekly;
+    const dayNames = ['Thu','Fri','Sat','Sun','Mon','Tue','Wed'];
+    if (wk.weekDays && wk.weekDays.length === 7) {
+      const wkSegs = wk.weekDays.map((wd, i) => {
+        const isFirst = i === 0, isLast = i === 6;
+        const pct = Math.min(wd.usage / wk.ceiling, 1) * 100;
+        const fillCls = pct < 50 ? 'low' : pct < 85 ? 'mid' : 'high';
+        const opacity = wd.isPast ? 0.4 : wd.isCurrent ? 1 : 0.55;
+        const br = isFirst ? '4px 0 0 4px' : isLast ? '0 4px 4px 0' : '0';
+        const gap = isLast ? '' : 'margin-right:1px';
+        const curCls = wd.isCurrent ? ' wk-current' : '';
+        const mmdd = wd.date.slice(5).replace('-', '/');
+        return `<div class="wk-slot${curCls}" style="opacity:${opacity};${gap}" title="${dayNames[i]} ${mmdd}: $${wd.usage.toFixed(2)}">
+          <div class="wk-bar-part" style="border-radius:${br}">
+            <div class="wg-bar-fill ${fillCls}" style="width:${pct.toFixed(1)}%;height:100%;border-radius:${br}"></div>
+          </div>
+          <div class="wk-day-label">${dayNames[i]}</div>
+        </div>`;
+      }).join('');
+      bars.push(`<div style="margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+          <span style="font-size:12px;font-weight:600;color:var(--text)">Weekly</span>
+          <span style="font-size:10px;color:var(--muted)">${wk.week} · est. $${wk.ceiling.toFixed(2)} ceiling (${wk.dataPoints} samples)</span>
+        </div>
+        <div style="display:flex;width:100%">${wkSegs}</div>
+      </div>`);
+    } else {
+      bars.push(renderUsageBar('Weekly', wk.week, wk.usage, wk.ceiling, wk.dataPoints, ''));
+    }
   }
 
   const capParts = [];

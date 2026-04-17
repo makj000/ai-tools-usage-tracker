@@ -669,6 +669,19 @@ function buildWindowUsage() {
   const currentWeek = weekKey(todayLA);
   const weeklyUsage = weeklyCosts[currentWeek] || 0;
 
+  // Per-day breakdown for the current week (Thu–Wed, 7 days)
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(currentWeek + "T12:00:00Z");
+    d.setUTCDate(d.getUTCDate() + i);
+    const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`;
+    return {
+      date: dateStr,
+      usage: +((dailyCosts[dateStr] || 0).toFixed(4)),
+      isCurrent: dateStr === todayLA,
+      isPast: dateStr < todayLA,
+    };
+  });
+
   // --- Monthly ---
   const monthlyCosts = {};
   for (const [day, cost] of Object.entries(dailyCosts)) {
@@ -731,6 +744,7 @@ function buildWindowUsage() {
       pct: weeklyCeiling ? Math.min(weeklyUsage / weeklyCeiling, 1.5) : null,
       dataPoints: weeklyCeilingValues.length,
       week: currentWeek,
+      weekDays,
     },
     // Monthly
     monthly: {
