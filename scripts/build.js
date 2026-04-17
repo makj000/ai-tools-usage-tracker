@@ -684,6 +684,26 @@ function buildWindowUsage() {
   const currentMonth = todayLA.slice(0, 7);
   const monthlyUsage = monthlyCosts[currentMonth] || 0;
 
+  // Today's windows — one entry per reset-hour slot for today's LA date
+  const todayWindows = resetHours.map((startHour, i) => {
+    const endHour = resetHours[(i + 1) % resetHours.length];
+    const startEpoch = laEpoch(laNow.year, laNow.month, laNow.day, startHour);
+    // End epoch: if endHour <= startHour it wraps to tomorrow (the 23→0 window)
+    const endDay = endHour <= startHour
+      ? (() => { const d = new Date(startEpoch + 3600000); const la = toLADate(d.toISOString()); return { y: la.year, m: la.month, d: la.day }; })()
+      : { y: laNow.year, m: laNow.month, d: laNow.day };
+    const endEpoch = laEpoch(endDay.y, endDay.m, endDay.d, endHour) || (startEpoch + (endHour - startHour) * 3600000);
+    const usage = sumCostBetween(startEpoch, Math.min(endEpoch, now));
+    return {
+      startHour,
+      endHour,
+      durationHours: endHour > startHour ? endHour - startHour : 24 - startHour + endHour,
+      usage: +usage.toFixed(4),
+      isCurrent: startEpoch <= now && now < endEpoch,
+      isPast: endEpoch <= now,
+    };
+  });
+
   return {
     resetHours,
     windowStartHour: windowStartLA.hour,
@@ -695,6 +715,7 @@ function buildWindowUsage() {
     pctUsed: medianCeiling ? Math.min(currentUsage / medianCeiling, 1.5) : null,
     ceilings: ceilings.map(c => ({ ts: c.ts, cost: +c.cost.toFixed(4) })),
     totalHits: rateLimitHits.length,
+    todayWindows,
     // Daily
     daily: {
       usage: dailyUsage,
