@@ -270,8 +270,10 @@ function readAllTranscripts() {
             addCounts(extraTotals, usage);
             extraTotals.cost = (extraTotals.cost || 0) + cost;
 
-            if (!extraPerDay[day]) extraPerDay[day] = { cost: 0 };
-            extraPerDay[day].cost += cost;
+            const extraLA = toLADate(ts);
+            const extraDay = `${extraLA.year}-${String(extraLA.month).padStart(2,"0")}-${String(extraLA.day).padStart(2,"0")}`;
+            if (!extraPerDay[extraDay]) extraPerDay[extraDay] = { cost: 0 };
+            extraPerDay[extraDay].cost += cost;
 
             if (!extraPerProject[projectName]) extraPerProject[projectName] = { cost: 0 };
             extraPerProject[projectName].cost += cost;

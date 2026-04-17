@@ -206,7 +206,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.1.1</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.1.2</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -341,41 +341,65 @@ function onSessionClick(sessionId) {
   }
 }
 
-// --- dual-bar chart builder (activity + cost, click-to-filter by day) ---
-function buildDualChart(labels, aValues, bValues, fmtA, fmtB) {
+// LA date string helper (YYYY-MM-DD) for a given Date object
+function laDateStr(d) {
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+}
+
+// --- dual-bar chart builder (activity + cost up, extra credit down) ---
+function buildDualChart(labels, aValues, bValues, cValues, fmtA, fmtB, fmtC) {
   const CHART_H = 100;
+  const EXTRA_H = 40;
+  const LABEL_H = 16; // bar-label height
   const maxA = Math.max(...aValues, 0.0001);
   const maxB = Math.max(...bValues, 0.0001);
+  const maxC = Math.max(...cValues, 0.0001);
+  const hasExtra = cValues.some(v => v > 0);
 
   const bars = labels.map((lbl, i) => {
     const a = aValues[i] || 0;
     const b = bValues[i] || 0;
+    const c = cValues[i] || 0;
     const hA = Math.max(a > 0 ? 2 : 0, Math.round((a / maxA) * CHART_H));
     const hB = Math.max(b > 0 ? 2 : 0, Math.round((b / maxB) * CHART_H));
+    const hC = hasExtra ? Math.max(c > 0 ? 2 : 0, Math.round((c / maxC) * EXTRA_H)) : 0;
     const dateLabel = lbl.length === 10 ? lbl.slice(5).replace('-', '/') : lbl;
     const activeClass = state.filterDay === lbl ? 'active-bar' : '';
-    const tip = `${lbl}: ${fmtA(a)} prompts · ${fmtB(b)}`;
-    return `<div class="bar-col ${activeClass}" title="${tip}" onclick="onBarClick('${lbl}')">
+    const tip = `${lbl}: ${fmtA(a)} prompts · ${fmtB(b)}${c > 0 ? ' · ' + fmtC(c) + ' extra' : ''}`;
+    return `<div class="bar-col ${activeClass}" style="justify-content:flex-start" title="${tip}" onclick="onBarClick('${lbl}')">
       <div style="display:flex;align-items:flex-end;gap:1px;width:100%;height:${CHART_H}px">
         <div class="bar" style="height:${hA}px;flex:1"></div>
         <div class="bar green" style="height:${hB}px;flex:1"></div>
       </div>
       <div class="bar-label">${dateLabel}</div>
+      ${hasExtra ? `<div style="display:flex;align-items:flex-start;width:100%;height:${EXTRA_H}px;padding-top:1px">
+        <div style="height:${hC}px;width:100%;background:var(--red);opacity:0.75;border-radius:0 0 2px 2px"></div>
+      </div>` : ''}
     </div>`;
   }).join('');
 
-  const yAxisA = `<div class="y-axis" style="color:var(--accent)">
-    <span>${fmtA(maxA)}</span><span>${fmtA(maxA/2)}</span><span>0</span>
+  const totalH = CHART_H + LABEL_H + (hasExtra ? EXTRA_H : 0);
+  const yAxisA = `<div style="display:flex;flex-direction:column;min-width:44px;text-align:right;font-size:9px">
+    <div style="height:${CHART_H}px;display:flex;flex-direction:column;justify-content:space-between;color:var(--accent)">
+      <span>${fmtA(maxA)}</span><span>${fmtA(Math.round(maxA/2))}</span><span>0</span>
+    </div>
+    <div style="height:${LABEL_H}px"></div>
+    ${hasExtra ? `<div style="height:${EXTRA_H}px;display:flex;flex-direction:column;justify-content:flex-end;color:var(--red)">
+      <span>${fmtC(maxC)}</span>
+    </div>` : ''}
   </div>`;
-  const yAxisB = `<div class="y-axis" style="text-align:left;color:var(--green)">
-    <span>${fmtB(maxB)}</span><span>${fmtB(maxB/2)}</span><span>0</span>
+  const yAxisB = `<div style="display:flex;flex-direction:column;min-width:44px;text-align:left;font-size:9px;color:var(--green)">
+    <div style="height:${CHART_H}px;display:flex;flex-direction:column;justify-content:space-between">
+      <span>${fmtB(maxB)}</span><span>${fmtB(maxB/2)}</span><span>0</span>
+    </div>
   </div>`;
 
+  const chartH = hasExtra ? `${CHART_H + LABEL_H + EXTRA_H}px` : `${CHART_H}px`;
   return `<div class="chart-outer">
     ${yAxisA}
-    <div class="chart-inner">
-      <div class="grid-lines"><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div></div>
-      <div class="chart" style="gap:4px">${bars}</div>
+    <div class="chart-inner" style="height:${chartH}">
+      <div class="grid-lines" style="bottom:${hasExtra ? LABEL_H + EXTRA_H : 0}px"><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div></div>
+      <div class="chart" style="gap:4px;height:${chartH};align-items:flex-start">${bars}</div>
     </div>
     ${yAxisB}
   </div>`;
@@ -765,7 +789,7 @@ function renderExtraGauge() {
   const extraTotal = t.extraTotals?.cost || 0;
   if (extraTotal === 0) return '';
 
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = laDateStr(new Date());
   const thisMonth = todayKey.slice(0, 7);
 
   // This month's extra
@@ -786,20 +810,6 @@ function renderExtraGauge() {
   const pct = Math.round(Math.min(monthExtra / subCost, 2) * 100);
   const barPct = Math.min(pct, 100);
   const cls = monthExtra < 5 ? 'low' : monthExtra < 15 ? 'mid' : 'high';
-
-  // Sparkline of daily extra this month
-  const days = [];
-  for (let i = 0; i < dayOfMonth; i++) {
-    const d = new Date(+thisMonth.slice(0,4), +thisMonth.slice(5,7) - 1, i + 1);
-    days.push(d.toISOString().slice(0, 10));
-  }
-  const dailyVals = days.map(d => t.extraPerDay[d]?.cost || 0);
-  const maxDaily = Math.max(...dailyVals, 0.01);
-  const sparkBars = dailyVals.map((v, i) => {
-    const h = Math.max(v > 0 ? 2 : 0, Math.round((v / maxDaily) * 20));
-    const tip = `${days[i]}: $${v.toFixed(2)}`;
-    return `<div title="${tip}" style="flex:1;display:flex;align-items:flex-end;justify-content:center;height:20px"><div style="width:100%;height:${h}px;background:var(--red);opacity:0.7;border-radius:1px"></div></div>`;
-  }).join('');
 
   // Balance tracking
   const purchased = getExtraPurchased();
@@ -836,8 +846,6 @@ function renderExtraGauge() {
       ${barLabel}
       ${barRight}
     </div>
-    <div style="display:flex;gap:1px;margin-top:8px;padding:0 2px">${sparkBars}</div>
-    <div style="font-size:9px;color:var(--muted);margin-top:2px;text-align:center">daily extra credit · ${thisMonth}</div>
   </div>`;
 }
 
@@ -852,10 +860,10 @@ function renderOverview() {
   const days = [];
   for (let i = 13; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
-    days.push(d.toISOString().slice(0, 10));
+    days.push(laDateStr(d));
   }
   const perDay = t.perDay || {};
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = laDateStr(new Date());
 
   // Compute filtered chart data
   const pdMap = buildProjectDayMap();
@@ -875,6 +883,8 @@ function renderOverview() {
     }
     return perDay[day]?.cost || 0;
   });
+
+  const extraValues = days.map(day => t.extraPerDay?.[day]?.cost || 0);
 
   const todayCost = costValues[costValues.length - 1] || 0;
   const todayPrompts = activityValues[activityValues.length - 1] || 0;
@@ -914,7 +924,7 @@ function renderOverview() {
     </div>
     <div class="chart-wrap">
       <h3>Activity & Cost — last 14 days${state.filterProject ? ' · filtered' : ''}</h3>
-      ${buildDualChart(days, activityValues, costValues, v => String(Math.round(v)), v => v >= 1 ? '$' + v.toFixed(1) : v > 0 ? '$' + v.toFixed(2) : '$0')}
+      ${buildDualChart(days, activityValues, costValues, extraValues, v => String(Math.round(v)), v => v >= 1 ? '$' + v.toFixed(1) : v > 0 ? '$' + v.toFixed(2) : '$0', v => v > 0 ? '-$' + v.toFixed(2) : '')}
     </div>
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
