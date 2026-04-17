@@ -832,6 +832,10 @@ function build() {
 
   const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")) : {};
   if (config.extraSpentOverride != null) tokens.extraTotals.cost = config.extraSpentOverride;
+  if (config.weeklyLimitSeed != null && windowUsage?.weekly) {
+    windowUsage.weekly.ceiling = config.weeklyLimitSeed;
+    windowUsage.weekly.pct = Math.min(windowUsage.weekly.usage / config.weeklyLimitSeed, 1.5);
+  }
 
   const data = {
     generatedAt: new Date().toISOString(),

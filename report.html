@@ -167,11 +167,13 @@
   .win-slot { display: flex; flex-direction: column; min-width: 0; cursor: default; }
   .win-bar-part { height: 10px; background: var(--border); position: relative; overflow: hidden; }
   .win-slot:hover .win-bar-part { filter: brightness(1.4); }
+  .win-slot.win-current .win-bar-part { outline: 1px solid var(--blue); outline-offset: 1px; }
   .win-time-row { display: flex; justify-content: space-between; padding-top: 2px; font-size: 9px; }
   .win-slot .win-t-start { color: var(--muted); }
   .win-slot .win-t-end { visibility: hidden; color: var(--muted); }
   .win-slot:hover .win-t-start { color: var(--text); font-weight: 700; }
   .win-slot:hover .win-t-end { visibility: visible; color: var(--text); font-weight: 700; }
+  .win-slot.win-current .win-t-start { color: var(--blue); }
   .wk-slot { display: flex; flex-direction: column; min-width: 0; cursor: default; flex: 1; }
   .wk-bar-part { height: 10px; background: var(--border); position: relative; overflow: hidden; }
   .wk-slot:hover .wk-bar-part { filter: brightness(1.4); }
@@ -206,7 +208,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.1.2</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.2.0</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -668,7 +670,8 @@ function renderWindowGauge() {
       const opacity = ww.isPast ? 0.4 : 1;
       const brBar = isFirst ? '4px 0 0 4px' : isLast ? '0 4px 4px 0' : '0';
       const gap = isLast ? '' : 'margin-right:1px';
-      return `<div class="win-slot" style="flex:${ww.durationHours};opacity:${opacity};${gap}" title="${fmtHour(ww.startHour)}–${fmtHour(ww.endHour)}: $${ww.usage.toFixed(2)}">
+      const curCls = ww.isCurrent ? ' win-current' : '';
+      return `<div class="win-slot${curCls}" style="flex:${ww.durationHours};opacity:${opacity};${gap}" title="${fmtHour(ww.startHour)}–${fmtHour(ww.endHour)}: $${ww.usage.toFixed(2)}">
         <div class="win-bar-part" style="border-radius:${brBar}">
           <div class="wg-bar-fill ${fillCls}" style="width:${pct.toFixed(1)}%;height:100%;border-radius:${brBar}"></div>
         </div>
