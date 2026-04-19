@@ -208,7 +208,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.3.3</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.4.5</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -842,7 +842,21 @@ function renderExtraGauge() {
 
   return `<div class="window-gauge">
     <div class="wg-header">
-      <span class="wg-title" style="color:var(--red)">Extra Credit Usage</span>
+      <span style="display:flex;align-items:center;gap:6px">
+        <span class="wg-title" style="color:var(--red)">Extra Credit Usage</span>
+        ${(() => {
+          const w = window.TRACKER_DATA?.windowUsage;
+          const hours = w?.resetHours || [];
+          const nowHour = parseInt(new Date().toLocaleString('en-US', {timeZone:'America/Los_Angeles', hour:'numeric', hour12:false}));
+          let sh = hours[hours.length - 1];
+          for (let i = hours.length - 1; i >= 0; i--) { if (hours[i] <= nowHour) { sh = hours[i]; break; } }
+          const curSlot = w?.todayWindows?.find(ww => ww.startHour === sh);
+          const isExtra = curSlot && (w.hitEpochs || []).some(e => e >= curSlot.startEpoch && e < Date.now());
+          return isExtra
+            ? `<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(248,81,73,0.15);padding:1px 5px;border-radius:3px;letter-spacing:0.03em">ON</span>`
+            : `<span style="font-size:9px;font-weight:600;color:var(--muted);background:rgba(139,148,158,0.12);padding:1px 5px;border-radius:3px;letter-spacing:0.03em">OFF</span>`;
+        })()}
+      </span>
       <span class="wg-meta" style="display:flex;align-items:center;gap:8px">
         <span>${thisMonth} · ${extraDays} days with extra</span>
         <button onclick="adjustExtraCredit()" style="padding:2px 8px;font-size:10px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer">+ Add credit</button>
@@ -1193,6 +1207,45 @@ function formatRelative(d) {
 }
 
 loadAll();
+
+// --- Window usage notifications ---
+// Polls data.js every 15s; fires a system notification when window pct increases.
+(function () {
+  let lastPct = null;
+
+  async function notify(oldPct, newPct, wu) {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'default') await Notification.requestPermission();
+    if (Notification.permission !== 'granted') return;
+    const pct = Math.round(newPct * 100);
+    const delta = Math.round((newPct - oldPct) * 100);
+    const ceiling = wu?.medianCeiling != null ? ` · ceiling $${wu.medianCeiling.toFixed(2)}` : '';
+    new Notification(`Claude window: ${pct}% used (+${delta}%)`, {
+      body: `Current window${ceiling}`,
+      silent: true,
+    });
+  }
+
+  async function poll() {
+    try {
+      const resp = await fetch('data.js?t=' + Date.now());
+      if (!resp.ok) return;
+      const text = await resp.text();
+      // Run in a temp global so we don't clobber the live render data
+      eval(text.replace(/window\.TRACKER_DATA\b/, 'window.__TD_POLL__'));
+      const fresh = window.__TD_POLL__;
+      delete window.__TD_POLL__;
+      const newPct = fresh?.windowUsage?.pct ?? null;
+      if (newPct === null) return;
+      if (lastPct !== null && newPct > lastPct) notify(lastPct, newPct, fresh.windowUsage);
+      lastPct = newPct;
+    } catch (_) {}
+  }
+
+  // Seed lastPct from already-loaded data so the first poll doesn't false-fire
+  lastPct = window.TRACKER_DATA?.windowUsage?.pct ?? null;
+  setInterval(poll, 15000);
+})();
 </script>
 </body>
 </html>

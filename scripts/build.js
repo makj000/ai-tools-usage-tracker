@@ -609,6 +609,7 @@ function buildWindowUsage() {
   const now = Date.now();
   const currentWindowStart = findWindowStart(now);
   const currentUsage = sumCostBetween(currentWindowStart, now);
+  const currentIsExtra = rateLimitHits.some(h => h.epoch >= currentWindowStart && h.epoch < now);
 
   // Find next boundary for display
   const laNow = toLADate(new Date(now).toISOString());
@@ -717,6 +718,7 @@ function buildWindowUsage() {
     return {
       startHour,
       endHour,
+      startEpoch,
       durationHours: endHour > startHour ? endHour - startHour : 24 - startHour + endHour,
       usage: +usage.toFixed(4),
       isCurrent: startEpoch <= now && now < endEpoch,
@@ -731,6 +733,7 @@ function buildWindowUsage() {
     nextResetHour: nextBoundaryHour,
     // Per-window
     currentUsage,
+    hitEpochs: rateLimitHits.map(h => h.epoch),
     medianCeiling,
     pctUsed: medianCeiling ? Math.min(currentUsage / medianCeiling, 1.5) : null,
     ceilings: ceilings.map(c => ({ ts: c.ts, cost: +c.cost.toFixed(4) })),
