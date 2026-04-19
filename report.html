@@ -165,7 +165,7 @@
   .window-gauge .wg-stats .wg-current { font-weight: 700; }
   .window-gauge .wg-stats .wg-ceiling { color: var(--muted); }
   .win-slot { display: flex; flex-direction: column; min-width: 0; cursor: default; }
-  .win-bar-part { height: 10px; background: var(--border); position: relative; overflow: hidden; }
+  .win-bar-part { height: 14px; background: var(--border); position: relative; overflow: hidden; }
   .win-slot:hover .win-bar-part { filter: brightness(1.4); }
   .win-slot.win-current .win-bar-part { outline: 1px solid var(--blue); outline-offset: 1px; }
   .win-time-row { display: flex; justify-content: space-between; padding-top: 2px; font-size: 9px; }
@@ -208,7 +208,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.3.2</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.3.3</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -676,12 +676,12 @@ function renderWindowGauge() {
       return `<div class="win-slot${curCls}" style="flex:${ww.durationHours};opacity:${opacity};${gap}" title="${fmtHour(ww.startHour)}–${fmtHour(ww.endHour)}: $${ww.usage.toFixed(2)}">
         <div class="win-bar-part" style="border-radius:${brBar}">
           <div class="wg-bar-fill ${fillCls}" style="width:${pct.toFixed(1)}%;height:100%;border-radius:${brBar}"></div>
+          ${pct > 0 ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:rgba(255,255,255,0.85);pointer-events:none">${Math.round(pct)}%</div>` : ''}
         </div>
         <div class="win-time-row">
           <span class="win-t-start">${fmtHour(ww.startHour)}</span>
           <span class="win-t-end">${fmtHour(ww.endHour)}</span>
         </div>
-        ${pct > 0 ? `<div style="font-size:9px;color:var(--muted);text-align:center">${Math.round(pct)}%</div>` : ''}
       </div>`;
     }).join('');
     const staleNote = windowStale ? ` <span style="color:var(--muted);font-size:10px">${windowStale}</span>` : '';
