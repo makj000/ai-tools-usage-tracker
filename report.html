@@ -208,7 +208,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.2.0</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.3.2</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -667,10 +667,12 @@ function renderWindowGauge() {
       const isLast = i === w.todayWindows.length - 1;
       const pct = Math.min(ww.usage / w.medianCeiling, 1) * 100;
       const fillCls = pct < 50 ? 'low' : pct < 85 ? 'mid' : 'high';
-      const opacity = ww.isPast ? 0.4 : 1;
+      const winIsCurrent = ww.startHour === startHour;
+      const winIsPast = ww.endHour !== 0 ? ww.endHour <= nowHour : false;
+      const opacity = winIsPast ? 0.4 : 1;
       const brBar = isFirst ? '4px 0 0 4px' : isLast ? '0 4px 4px 0' : '0';
       const gap = isLast ? '' : 'margin-right:1px';
-      const curCls = ww.isCurrent ? ' win-current' : '';
+      const curCls = winIsCurrent ? ' win-current' : '';
       return `<div class="win-slot${curCls}" style="flex:${ww.durationHours};opacity:${opacity};${gap}" title="${fmtHour(ww.startHour)}–${fmtHour(ww.endHour)}: $${ww.usage.toFixed(2)}">
         <div class="win-bar-part" style="border-radius:${brBar}">
           <div class="wg-bar-fill ${fillCls}" style="width:${pct.toFixed(1)}%;height:100%;border-radius:${brBar}"></div>
@@ -702,14 +704,17 @@ function renderWindowGauge() {
     const dayNames = ['Thu','Fri','Sat','Sun','Mon','Tue','Wed'];
     if (wk.weekDays && wk.weekDays.length === 7) {
       const dayAllotment = w.daily?.ceiling || (wk.ceiling / 7);
+      const todayStr = laDateStr(new Date());
       const wkSegs = wk.weekDays.map((wd, i) => {
         const isFirst = i === 0, isLast = i === 6;
         const pct = Math.min(wd.usage / dayAllotment, 1) * 100;
         const fillCls = pct < 50 ? 'low' : pct < 85 ? 'mid' : 'high';
-        const opacity = wd.isPast ? 0.4 : wd.isCurrent ? 1 : 0.55;
+        const isCurrent = wd.date === todayStr;
+        const isPast = wd.date < todayStr;
+        const opacity = isPast ? 0.4 : isCurrent ? 1 : 0.55;
         const br = isFirst ? '4px 0 0 4px' : isLast ? '0 4px 4px 0' : '0';
         const gap = isLast ? '' : 'margin-right:1px';
-        const curCls = wd.isCurrent ? ' wk-current' : '';
+        const curCls = isCurrent ? ' wk-current' : '';
         const mmdd = wd.date.slice(5).replace('-', '/');
         return `<div class="wk-slot${curCls}" style="opacity:${opacity};${gap}" title="${dayNames[i]} ${mmdd}: $${wd.usage.toFixed(2)} / $${dayAllotment.toFixed(2)} daily (${Math.round(pct)}%)">
           <div class="wk-bar-part" style="border-radius:${br}">

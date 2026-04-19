@@ -70,8 +70,8 @@ claude-tracker/
 
 - **Top row** (two-column grid):
   - Left: Stat cards — Extra Credit Used, Today (equiv.), Input Tokens, Output Tokens, All-time Extra
-  - Right: Usage Limits Estimate (window/daily/weekly/monthly bars) + Extra Credit Usage gauge with sparkline
-- **Chart**: Single dual-bar chart, last 14 days — amber bar = prompts, green bar = cost; each series scaled independently to its own max; amber y-axis on the left, green y-axis on the right (top/mid/0 labels); clicking a day column filters by that day (whole column highlights, not individual bars)
+  - Right: Usage Limits Estimate (window/daily/weekly/monthly bars) + Extra Credit Usage gauge
+- **Chart**: Single dual-bar chart, last 14 days — amber bar = prompts (up), green bar = cost (up), red bar = extra credit (down from baseline); each series scaled independently to its own max; amber y-axis on the left, green y-axis on the right (top/mid/0 labels); red max label at bottom-left; clicking a day column filters by that day (whole column highlights, not individual bars)
 - **Recent Prompts**: Searchable list with cost pills, turn counts, expand/collapse for per-turn details table
 
 #### Token Usage Tab
@@ -88,6 +88,7 @@ claude-tracker/
 - `toLADate(isoStr)` — converts any ISO timestamp to LA date parts `{year, month, day, hour, ...}`; normalizes `hour: 24` (midnight quirk) to `0`
 - `laEpoch(year, month, day, hour)` — converts an LA date+hour back to a UTC epoch ms; uses a modulo-aware diff `((laH - hour) % 24 + 24) % 24` (clamped to ±12h) to avoid the naive subtraction landing on the previous day when `hour = 0`
 - `dailyCosts` and `hitDays` in `buildWindowUsage` use LA date (not UTC slice) to prevent post-5pm PT usage from leaking into the next calendar day
+- `days` array and `todayKey` in `renderOverview` and `renderExtraGauge` use `laDateStr(new Date())` (client-side LA date) for the same reason
 
 ### Rate Limit Detection
 
@@ -101,9 +102,9 @@ claude-tracker/
 - Collects cost-at-hit for each rate limit event per tier (window, daily, weekly, monthly)
 - Uses **median** ceiling (robust against outliers like large compaction sessions)
 - Deduplicates same-window retries
-- **Window bar is segmented** — one slot per detected reset-hour for today (widths proportional to hours); fill = usage vs. median ceiling; past slots faded to 40%; current at full opacity; hover highlights start/end timestamps and shows usage % below each slot; falls back to plain `renderUsageBar` if `todayWindows` data is missing
+- **Window bar is segmented** — one slot per detected reset-hour for today (widths proportional to hours); fill = usage vs. median ceiling; past slots faded to 40%; current slot has blue outline + blue start-time label (`.win-current`); hover highlights start/end timestamps and shows usage % below each slot; falls back to plain `renderUsageBar` if `todayWindows` data is missing; **`isCurrent`/`isPast` computed client-side** (`winIsCurrent = ww.startHour === startHour`, `winIsPast = endHour !== 0 ? endHour <= nowHour : false`) so stale data.js never shows the wrong slot highlighted
 - **Weekly window resets on Thursday mornings** — `weekKey()` in build.js groups dates into Thu–Wed weeks, keyed by the Thursday start date (YYYY-MM-DD format)
-- **Weekly bar is segmented** — 7 equal slots (Thu–Wed), each showing that day's usage vs. the **daily ceiling** (not weekly); segment is full when the day's allotment is exhausted regardless of weekly budget remaining; current day has blue outline + label; past days faded to 40%; future days at 55%; overall weekly % shown in the header; tooltip shows `Day MM/DD: $X.XX / $Y.YY daily (Z%)`
+- **Weekly bar is segmented** — 7 equal slots (Thu–Wed), each showing that day's usage vs. the **daily ceiling** (not weekly); segment is full when the day's allotment is exhausted regardless of weekly budget remaining; current day has blue outline + label; past days faded to 40%; future days at 55%; overall weekly % shown in the header; tooltip shows `Day MM/DD: $X.XX / $Y.YY daily (Z%)`; **`isCurrent`/`isPast` computed client-side** (`wd.date === laDateStr(new Date())`) so stale data.js never highlights the wrong day
 - **Daily bar is hidden** — daily estimated cap shown as inline text in the "Est. cap" row alongside the monthly spend
 - **Monthly has no known ceiling** — shown as a plain number (no bar/percentage), blue text only
 
@@ -112,6 +113,7 @@ claude-tracker/
 Optional JSON file read by build.js on every build. Supported fields:
 - `extraPurchasedSeed` — default purchased extra credit amount (number, USD); used as the `localStorage` fallback in `getExtraPurchased()` when the user hasn't set a value in the browser
 - `extraSpentOverride` — override the transcript-derived `extraTotals.cost` (number, USD); useful when transcript detection undercounts actual extra credit charges
+- `weeklyLimitSeed` — override the estimated weekly ceiling (number, USD); use to calibrate against the actual % shown on claude.ai's usage page: `weeklyLimitSeed = currentWeeklyUsage / claudeAiPct`; calibration history is tracked in memory (`project_weekly_calibration.md`) — always record old seed + weeklyUsage + claude.ai % before updating, to detect oscillation
 
 ### History Enrichment (server-side)
 
@@ -128,7 +130,7 @@ Optional JSON file read by build.js on every build. Supported fields:
 
 - Manual purchase entry via localStorage (`claude-tracker-extraPurchased`)
 - Balance = purchased - consumed, with add/reset buttons
-- Monthly sparkline of daily extra charges
+- Daily extra credit charges shown as downward red bars in the Activity & Cost chart (bottom half, 40px section); scaled independently to their own max; red max label on bottom-left y-axis
 
 ## Commands
 
