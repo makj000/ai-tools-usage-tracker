@@ -284,7 +284,7 @@ let state = {
 };
 
 // --- helpers for computing per-project per-day data ---
-// Build a map: project -> day -> { prompts, cost }
+// Build a map: project -> day -> { prompts, cost, lastTs }
 // from history entries (which have per-prompt cost from enrichHistory).
 function buildProjectDayMap() {
   const map = {};
@@ -293,10 +293,11 @@ function buildProjectDayMap() {
     const day = h.timestamp ? new Date(h.timestamp).toISOString().slice(0, 10) : null;
     if (!day) continue;
     if (!map[proj]) map[proj] = {};
-    if (!map[proj][day]) map[proj][day] = { prompts: 0, cost: 0, isCowork: !!h.isCowork };
+    if (!map[proj][day]) map[proj][day] = { prompts: 0, cost: 0, isCowork: !!h.isCowork, lastTs: h.timestamp || 0 };
     map[proj][day].prompts++;
     map[proj][day].cost += (typeof h.cost === 'number' ? h.cost : 0);
     if (h.isCowork) map[proj][day].isCowork = true;
+    if (h.timestamp) map[proj][day].lastTs = Math.max(map[proj][day].lastTs || 0, h.timestamp);
   }
   return map;
 }
@@ -610,9 +611,12 @@ function renderSidebar() {
         cost: days[state.filterDay]?.cost || 0,
         prompts: days[state.filterDay]?.prompts || 0,
         isCowork: !!days[state.filterDay]?.isCowork,
+        lastTs: days[state.filterDay]?.lastTs || 0,
       }))
       .filter(p => p.cost > 0 || p.prompts > 0)
-      .sort((a, b) => b.cost - a.cost)
+      .sort((a, b) => state.sidebarProjectSort === 'recent'
+        ? (b.lastTs || 0) - (a.lastTs || 0)
+        : b.cost - a.cost)
       .slice(0, 10);
   } else {
     const allProjects = state.tokens?.projects || [];
@@ -662,10 +666,11 @@ function renderSidebar() {
   const sessEl = document.getElementById('sessionList');
   const sessHdrEl = document.getElementById('sessionHeader');
   const allSessions = filteredSessions();
-  const sessions = (state.sidebarSessionSort === 'recent'
-    ? [...allSessions].sort((a, b) => new Date(b.lastTs || 0) - new Date(a.lastTs || 0))
-    : allSessions
-  ).slice(0, 60);
+  const sessions = [...allSessions]
+    .sort((a, b) => state.sidebarSessionSort === 'recent'
+      ? new Date(b.lastTs || 0) - new Date(a.lastTs || 0)
+      : (b.cost || 0) - (a.cost || 0))
+    .slice(0, 60);
 
   if (sessHdrEl) {
     sessHdrEl.className = 'sidebar-tabs';
