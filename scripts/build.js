@@ -14,6 +14,7 @@ const OUTPUT = path.join(ROOT, "data.js");
 const CONFIG_PATH = path.join(DATA_DIR, "config.json");
 const HISTORY_PATH = path.join(os.homedir(), ".claude", "history.jsonl");
 const PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
+const COWORK_BASE  = path.join(os.homedir(), "Library", "Application Support", "Claude", "local-agent-mode-sessions");
 
 const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
 
@@ -471,6 +472,73 @@ function laEpoch(year, month, day, hour) {
   return guessDate.getTime() - diff * 3600000;
 }
 
+// Read Claude Cowork (local-agent-mode) sessions from the desktop app's storage.
+// Each session has an audit.jsonl with _audit_timestamp fields and a final "result"
+// entry containing total_cost_usd. For scheduled tasks, use lastScheduledFor as the
+// effective start epoch (the actual run may start minutes after the scheduled time).
+function readCoworkUsageEntries() {
+  if (!fs.existsSync(COWORK_BASE)) return [];
+  const entries = [];
+
+  for (const workspace of fs.readdirSync(COWORK_BASE)) {
+    const wPath = path.join(COWORK_BASE, workspace);
+    try { if (!fs.statSync(wPath).isDirectory()) continue; } catch { continue; }
+
+    for (const room of fs.readdirSync(wPath)) {
+      const rPath = path.join(wPath, room);
+      try { if (!fs.statSync(rPath).isDirectory()) continue; } catch { continue; }
+
+      // Build scheduled-task map: runAtMs → scheduledForMs (±5s tolerance on lookup)
+      const scheduledPairs = []; // [{ runMs, schedMs }]
+      const tasksPath = path.join(rPath, "scheduled-tasks.json");
+      if (fs.existsSync(tasksPath)) {
+        try {
+          const tasks = JSON.parse(fs.readFileSync(tasksPath, "utf8"));
+          for (const t of (tasks.scheduledTasks || [])) {
+            if (t.lastRunAt && t.lastScheduledFor) {
+              scheduledPairs.push({
+                runMs:   new Date(t.lastRunAt).getTime(),
+                schedMs: new Date(t.lastScheduledFor).getTime(),
+                schedTs: t.lastScheduledFor,
+              });
+            }
+          }
+        } catch {}
+      }
+
+      // Scan local_{id}/audit.jsonl
+      for (const item of fs.readdirSync(rPath)) {
+        if (!item.startsWith("local_")) continue;
+        const auditPath = path.join(rPath, item, "audit.jsonl");
+        if (!fs.existsSync(auditPath)) continue;
+        try {
+          const lines = fs.readFileSync(auditPath, "utf8").split("\n").filter(Boolean);
+          let firstTs = null;
+          let totalCost = null;
+          for (const line of lines) {
+            let e;
+            try { e = JSON.parse(line); } catch { continue; }
+            if (!firstTs && e._audit_timestamp) firstTs = e._audit_timestamp;
+            if (e.type === "result" && typeof e.total_cost_usd === "number") {
+              totalCost = e.total_cost_usd;
+            }
+          }
+          if (!firstTs || !totalCost) continue;
+
+          // Use scheduled start if this session matches a scheduled task (within 5s)
+          const runMs = new Date(firstTs).getTime();
+          const match = scheduledPairs.find(p => Math.abs(p.runMs - runMs) <= 5000);
+          const effectiveTs  = match ? match.schedTs : firstTs;
+          const effectiveEpoch = match ? match.schedMs : runMs;
+
+          entries.push({ ts: effectiveTs, epoch: effectiveEpoch, cost: totalCost });
+        } catch {}
+      }
+    }
+  }
+  return entries;
+}
+
 function buildWindowUsage() {
   if (!fs.existsSync(PROJECTS_DIR)) return null;
 
@@ -533,39 +601,31 @@ function buildWindowUsage() {
     }
   }
 
+  // Merge Cowork (local-agent-mode) sessions — treated identically to Code turns
+  for (const e of readCoworkUsageEntries()) usageEntries.push(e);
+
   if (!rateLimitHits.length) return null;
 
-  // Derive window boundaries from reset hours
-  const resetHours = [...new Set(rateLimitHits.map(r => r.resetHour).filter(h => h !== null))].sort((a, b) => a - b);
-  if (!resetHours.length) return null;
-
-  // Sort usage by time for binary-search-like window sums
   usageEntries.sort((a, b) => a.epoch - b.epoch);
+  if (!usageEntries.length) return null;
 
-  // For a given epoch, find which window it falls in and the window start epoch
-  function findWindowStart(epoch) {
-    const la = toLADate(new Date(epoch).toISOString());
-    // Find the most recent boundary hour that has passed
-    let startHour = resetHours[resetHours.length - 1]; // wrap to previous day
-    let startDay = la.day;
-    let startMonth = la.month;
-    let startYear = la.year;
-    for (let i = resetHours.length - 1; i >= 0; i--) {
-      if (resetHours[i] <= la.hour) {
-        startHour = resetHours[i];
-        break;
-      }
+  // Rolling 5h windows: a new window starts at the first usage event after the
+  // previous window closes. This matches Claude's actual behaviour where windows
+  // are anchored to session-start time, not fixed clock boundaries.
+  const WINDOW_DURATION_MS = 5 * 60 * 60 * 1000;
+  const detectedWindows = [];
+  for (const u of usageEntries) {
+    const last = detectedWindows[detectedWindows.length - 1];
+    if (!last || u.epoch >= last.endEpoch) {
+      detectedWindows.push({ startEpoch: u.epoch, endEpoch: u.epoch + WINDOW_DURATION_MS, usage: 0, messages: 0 });
     }
-    if (startHour > la.hour) {
-      // Wrapped to yesterday's last boundary
-      const yesterday = new Date(epoch - 86400000);
-      const yLA = toLADate(yesterday.toISOString());
-      startDay = yLA.day;
-      startMonth = yLA.month;
-      startYear = yLA.year;
-    }
-    return laEpoch(startYear, startMonth, startDay, startHour);
+    const win = detectedWindows[detectedWindows.length - 1];
+    win.usage += u.cost;
+    win.messages++;
   }
+
+  // Keep reset hours for display context only (no longer used for window boundaries)
+  const resetHours = [...new Set(rateLimitHits.map(r => r.resetHour).filter(h => h !== null))].sort((a, b) => a - b);
 
   // Sum usage cost between two epochs
   function sumCostBetween(startEpoch, endEpoch) {
@@ -576,24 +636,18 @@ function buildWindowUsage() {
     return total;
   }
 
-  // Compute ceiling at each rate_limit hit (usage from window start to hit time).
-  // Deduplicate: multiple hits in the same window (user retried) count as one
-  // data point — keep only the first hit per window start.
+  // Compute ceiling at each rate_limit hit using the rolling window that contained
+  // the hit. Deduplicate: multiple hits in the same window count as one data point.
   const seenWindows = new Set();
   const ceilings = [];
   for (const hit of rateLimitHits) {
-    const winStart = findWindowStart(hit.epoch);
-    const winKey = String(winStart);
+    const hitWin = detectedWindows.find(w => hit.epoch >= w.startEpoch && hit.epoch < w.endEpoch);
+    if (!hitWin) continue;
+    const winKey = String(hitWin.startEpoch);
     if (seenWindows.has(winKey)) continue;
     seenWindows.add(winKey);
-    const cost = sumCostBetween(winStart, hit.epoch);
-    if (cost > 0) {
-      ceilings.push({
-        ts: hit.ts,
-        resetHour: hit.resetHour,
-        cost,
-      });
-    }
+    const cost = sumCostBetween(hitWin.startEpoch, hit.epoch);
+    if (cost > 0) ceilings.push({ ts: hit.ts, cost });
   }
 
   // Use median ceiling for robustness against outliers (e.g. a session with
@@ -605,17 +659,14 @@ function buildWindowUsage() {
       : (sortedCosts[sortedCosts.length / 2 - 1] + sortedCosts[sortedCosts.length / 2]) / 2
     : null;
 
-  // Current window
+  // Current rolling window
   const now = Date.now();
-  const currentWindowStart = findWindowStart(now);
-  const currentUsage = sumCostBetween(currentWindowStart, now);
-  const currentIsExtra = rateLimitHits.some(h => h.epoch >= currentWindowStart && h.epoch < now);
-
-  // Find next boundary for display
   const laNow = toLADate(new Date(now).toISOString());
-  let nextBoundaryHour = resetHours.find(h => h > laNow.hour);
-  if (nextBoundaryHour === undefined) nextBoundaryHour = resetHours[0]; // wraps to tomorrow
-  const windowStartLA = toLADate(new Date(currentWindowStart).toISOString());
+  const currentWin = [...detectedWindows].reverse().find(w => w.startEpoch <= now) || null;
+  const isCurrentActive = currentWin !== null && now < currentWin.endEpoch;
+  const currentWindowStart = currentWin ? currentWin.startEpoch : now;
+  const currentUsage = isCurrentActive ? currentWin.usage : 0;
+  const currentIsExtra = rateLimitHits.some(h => h.epoch >= currentWindowStart && h.epoch < now);
 
   // --- Daily / Weekly / Monthly ceilings ---
   // Helper: compute median of a number array
@@ -705,32 +756,32 @@ function buildWindowUsage() {
   const currentMonth = todayLA.slice(0, 7);
   const monthlyUsage = monthlyCosts[currentMonth] || 0;
 
-  // Today's windows — one entry per reset-hour slot for today's LA date
-  const todayWindows = resetHours.map((startHour, i) => {
-    const endHour = resetHours[(i + 1) % resetHours.length];
-    const startEpoch = laEpoch(laNow.year, laNow.month, laNow.day, startHour);
-    // End epoch: if endHour <= startHour it wraps to tomorrow (the 23→0 window)
-    const endDay = endHour <= startHour
-      ? (() => { const d = new Date(startEpoch + 3600000); const la = toLADate(d.toISOString()); return { y: la.year, m: la.month, d: la.day }; })()
-      : { y: laNow.year, m: laNow.month, d: laNow.day };
-    const endEpoch = laEpoch(endDay.y, endDay.m, endDay.d, endHour) || (startEpoch + (endHour - startHour) * 3600000);
-    const usage = sumCostBetween(startEpoch, Math.min(endEpoch, now));
-    return {
-      startHour,
-      endHour,
-      startEpoch,
-      durationHours: endHour > startHour ? endHour - startHour : 24 - startHour + endHour,
-      usage: +usage.toFixed(4),
-      isCurrent: startEpoch <= now && now < endEpoch,
-      isPast: endEpoch <= now,
-    };
-  });
+  // Today's windows: detected windows that overlap today's PT date
+  const todayStartMs = laEpoch(laNow.year, laNow.month, laNow.day, 0);
+  const todayEndMs = todayStartMs + 24 * 3600 * 1000;
+  const todayWindows = detectedWindows
+    .filter(w => w.endEpoch > todayStartMs && w.startEpoch < todayEndMs)
+    .map(w => {
+      const sLA = toLADate(new Date(w.startEpoch).toISOString());
+      const eLA = toLADate(new Date(w.endEpoch).toISOString());
+      return {
+        startEpoch: w.startEpoch,
+        endEpoch: w.endEpoch,
+        durationHours: 5,
+        usage: +w.usage.toFixed(4),
+        messages: w.messages,
+        startHour: sLA.hour,
+        endHour: eLA.hour,
+      };
+    });
 
   return {
     resetHours,
-    windowStartHour: windowStartLA.hour,
-    windowStartTs: new Date(currentWindowStart).toISOString(),
-    nextResetHour: nextBoundaryHour,
+    windowStartEpoch: currentWin ? currentWin.startEpoch : null,
+    windowEndEpoch: currentWin ? currentWin.endEpoch : null,
+    windowStartTs: currentWin ? new Date(currentWin.startEpoch).toISOString() : null,
+    windowEndTs: currentWin ? new Date(currentWin.endEpoch).toISOString() : null,
+    windowStartHour: currentWin ? toLADate(new Date(currentWin.startEpoch).toISOString()).hour : null,
     // Per-window
     currentUsage,
     hitEpochs: rateLimitHits.map(h => h.epoch),
@@ -738,6 +789,14 @@ function buildWindowUsage() {
     pctUsed: medianCeiling ? Math.min(currentUsage / medianCeiling, 1.5) : null,
     ceilings: ceilings.map(c => ({ ts: c.ts, cost: +c.cost.toFixed(4) })),
     totalHits: rateLimitHits.length,
+    detectedWindows: detectedWindows.slice(-50).map(w => ({
+      startEpoch: w.startEpoch,
+      endEpoch: w.endEpoch,
+      startTs: new Date(w.startEpoch).toISOString(),
+      endTs: new Date(w.endEpoch).toISOString(),
+      usage: +w.usage.toFixed(4),
+      messages: w.messages,
+    })),
     todayWindows,
     // Daily
     daily: {
@@ -838,6 +897,16 @@ function build() {
   if (config.weeklyLimitSeed != null && windowUsage?.weekly) {
     windowUsage.weekly.ceiling = config.weeklyLimitSeed;
     windowUsage.weekly.pct = Math.min(windowUsage.weekly.usage / config.weeklyLimitSeed, 1.5);
+  }
+  if (config.windowLimitSeed != null && windowUsage) {
+    windowUsage.medianCeiling = config.windowLimitSeed;
+    windowUsage.pctUsed = Math.min(windowUsage.currentUsage / config.windowLimitSeed, 1.5);
+    if (windowUsage.todayWindows) {
+      for (const w of windowUsage.todayWindows) {
+        w.ceiling = config.windowLimitSeed;
+        w.pct = Math.min(w.usage / config.windowLimitSeed, 1.5);
+      }
+    }
   }
 
   const data = {
