@@ -10,7 +10,7 @@
 
 ## Project Overview
 
-Claude Tracker is a self-hosted dashboard that tracks Claude Code usage, token consumption, and estimated API-equivalent costs. It runs entirely locally — a Python hook logs events, a Node.js build script processes Claude Code transcripts, and a single HTML file renders everything in the browser.
+Claude Tracker is a self-hosted dashboard that tracks Claude Code usage, Claude Cowork scheduled-task activity, token consumption, and estimated API-equivalent costs. It runs entirely locally — a Python hook logs events, a Node.js build script processes Claude Code and Claude Cowork data, and a single HTML file renders everything in the browser.
 
 ## Architecture
 
@@ -30,8 +30,8 @@ report.html + data.js     Static dashboard, open in any browser
 ### Data Flow
 
 1. **Hooks** (`log_hook.py`): Claude Code fires hooks on tool use and prompt submission. The hook appends a JSON line to `data/events.jsonl` and kicks off `node scripts/build.js` in the background.
-2. **Build** (`build.js`): Walks all Claude Code transcripts (`~/.claude/projects/*/sessions/*/transcript.jsonl`) and history (`~/.claude/history.jsonl`). Computes per-session, per-day, per-project token counts and costs. Detects rate limits and classifies extra-credit turns. Enriches history entries with cost data. Outputs `data.js`.
-3. **Dashboard** (`report.html`): Single-file HTML/CSS/JS. Loads `data.js` via script tag (cache-busted). Renders overview, token usage, and tool usage tabs.
+2. **Build** (`build.js`): Walks all Claude Code transcripts (`~/.claude/projects/*/sessions/*/transcript.jsonl`) and history (`~/.claude/history.jsonl`), and also reads Claude Cowork local-agent-mode session data from the desktop app's storage. Computes per-session, per-day, per-project token counts and costs. Detects rate limits and classifies extra-credit turns. Enriches history entries with cost data, merges Cowork runs into dashboard datasets, and synthesizes Cowork tool events for the Tool Usage tab. Outputs `data.js`.
+3. **Dashboard** (`report.html`): Single-file HTML/CSS/JS. Loads `data.js` via script tag (cache-busted). Renders overview, token usage, and tool usage tabs, with Cowork scheduled tasks visually distinguished from Claude Code items.
 
 ## File Structure
 
@@ -60,8 +60,8 @@ claude-tracker/
 
 - **Header**: Title, version, absolute timestamp of data freshness, monthly cost total
 - **Sidebar** (left, 280px):
-  - Top Projects list — shows cost bar + `$X.XX` + `Xk in · Xk out` tokens (clickable: single-click = filter, double-click = jump to Token Usage tab)
-  - Sessions list sorted by equiv. cost — shows cost, `Xk in · Xk out` tokens, and date (clickable = filter by session)
+  - Top Projects list — shows cost bar + `$X.XX` + `Xk in · Xk out` tokens (clickable: single-click = filter, double-click = jump to Token Usage tab); Claude Cowork projects are tinted and labeled `Scheduled`
+  - Sessions list sorted by equiv. cost — shows cost, `Xk in · Xk out` tokens, and date (clickable = filter by session); Claude Cowork runs are tinted and labeled `Scheduled`
 - **Main area** (right):
   - Filter bar (shown when any filter is active, with tag chips and reset button)
   - Three tabs: Overview, Token Usage, Tool Usage
@@ -72,15 +72,26 @@ claude-tracker/
   - Left: Stat cards — Extra Credit Used, Today (equiv.), Input Tokens, Output Tokens, All-time Extra
   - Right: Usage Limits Estimate (window/daily/weekly/monthly bars) + Extra Credit Usage gauge
 - **Chart**: Single dual-bar chart, last 14 days — amber bar = prompts (up), green bar = cost (up), red bar = extra credit (down from baseline); each series scaled independently to its own max; amber y-axis on the left, green y-axis on the right (top/mid/0 labels); red max label at bottom-left; clicking a day column filters by that day (whole column highlights, not individual bars)
-- **Recent Prompts**: Searchable list with cost pills, turn counts, expand/collapse for per-turn details table
+- **Recent Prompts**: Searchable list with cost pills, turn counts, expand/collapse for per-turn details table; Claude Cowork scheduled tasks are labeled `Scheduled Task` and use a stronger purple treatment than standard Claude Code items
 
 #### Token Usage Tab
 
-- Token totals, per-project cost bars, per-day cost table
+- Token totals, per-project cost bars, per-day cost table; Cowork scheduled-task projects are labeled `Scheduled`
 
 #### Tool Usage Tab
 
-- Tool frequency grid, per-tool counts
+- Tool frequency grid, per-tool counts, and tool-event feed
+- Includes synthesized Claude Cowork tool events from scheduled-task runs, labeled `Scheduled Task`
+
+### Claude Cowork Integration
+
+- `readCoworkSessions()` reads Claude Cowork scheduled-task runs from the desktop app's local-agent-mode storage
+- Scheduled-task runs are merged into:
+  - `history` for the main command feed
+  - `tokens.sessions` for the sidebar session list
+  - `tokens.projects` for project cost aggregation
+  - `events` / `stats.toolCounts` via synthesized tool events for the Tool Usage tab
+- Cowork items are identified with `isCowork` and rendered with `Scheduled` / `Scheduled Task` badges across the dashboard
 
 ### Timezone Handling
 

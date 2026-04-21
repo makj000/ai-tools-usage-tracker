@@ -473,12 +473,11 @@ function laEpoch(year, month, day, hour) {
 }
 
 // Read Claude Cowork (local-agent-mode) sessions from the desktop app's storage.
-// Each session has an audit.jsonl with _audit_timestamp fields and a final "result"
-// entry containing total_cost_usd. For scheduled tasks, use lastScheduledFor as the
-// effective start epoch (the actual run may start minutes after the scheduled time).
-function readCoworkUsageEntries() {
+// Returns rich session objects that are used both for window detection and for
+// merging into tokens.sessions, tokens.projects, and history in build().
+function readCoworkSessions() {
   if (!fs.existsSync(COWORK_BASE)) return [];
-  const entries = [];
+  const sessions = [];
 
   for (const workspace of fs.readdirSync(COWORK_BASE)) {
     const wPath = path.join(COWORK_BASE, workspace);
@@ -488,21 +487,32 @@ function readCoworkUsageEntries() {
       const rPath = path.join(wPath, room);
       try { if (!fs.statSync(rPath).isDirectory()) continue; } catch { continue; }
 
-      // Build scheduled-task map: runAtMs → scheduledForMs (±5s tolerance on lookup)
-      const scheduledPairs = []; // [{ runMs, schedMs }]
+      // Build scheduled-task map: runAtMs → task metadata (±5s tolerance)
+      const scheduledPairs = [];
       const tasksPath = path.join(rPath, "scheduled-tasks.json");
       if (fs.existsSync(tasksPath)) {
         try {
           const tasks = JSON.parse(fs.readFileSync(tasksPath, "utf8"));
           for (const t of (tasks.scheduledTasks || [])) {
-            if (t.lastRunAt && t.lastScheduledFor) {
+            if (t.lastRunAt) {
               scheduledPairs.push({
-                runMs:   new Date(t.lastRunAt).getTime(),
-                schedMs: new Date(t.lastScheduledFor).getTime(),
-                schedTs: t.lastScheduledFor,
+                runMs:    new Date(t.lastRunAt).getTime(),
+                schedMs:  t.lastScheduledFor ? new Date(t.lastScheduledFor).getTime() : null,
+                schedTs:  t.lastScheduledFor || null,
+                taskName: t.id || "cowork-session",
               });
             }
           }
+        } catch {}
+      }
+
+      // Load local_{id}.json descriptors → cliSessionId + model
+      const descriptors = {};
+      for (const item of fs.readdirSync(rPath)) {
+        if (!item.startsWith("local_") || !item.endsWith(".json")) continue;
+        try {
+          const meta = JSON.parse(fs.readFileSync(path.join(rPath, item), "utf8"));
+          descriptors[item.replace(".json", "")] = meta;
         } catch {}
       }
 
@@ -513,33 +523,99 @@ function readCoworkUsageEntries() {
         if (!fs.existsSync(auditPath)) continue;
         try {
           const lines = fs.readFileSync(auditPath, "utf8").split("\n").filter(Boolean);
-          let firstTs = null;
-          let totalCost = null;
+          let firstTs = null, lastTs = null, totalCost = null;
+          let durationMs = null, numTurns = 0, isError = false;
+          let resultText = null, usage = null, model = null;
+          let lastAssistantText = null;
+          const toolCalls = [];
+
           for (const line of lines) {
             let e;
             try { e = JSON.parse(line); } catch { continue; }
-            if (!firstTs && e._audit_timestamp) firstTs = e._audit_timestamp;
-            if (e.type === "result" && typeof e.total_cost_usd === "number") {
-              totalCost = e.total_cost_usd;
+            const ts = e._audit_timestamp;
+            if (!firstTs && ts) firstTs = ts;
+            if (ts) lastTs = ts;
+
+            if (e.type === "assistant") {
+              const content = e.message?.content;
+              if (!model && e.message?.model) model = e.message.model;
+              if (Array.isArray(content)) {
+                for (const c of content) {
+                  if (c.type === "tool_use") {
+                    toolCalls.push({
+                      ts, cost: 0, model: model || "cowork",
+                      in: 0, out: 0, cr: 0,
+                      toolName: c.name,
+                      toolInput: c.input ? JSON.stringify(c.input).slice(0, 150) : "",
+                      isCoworkTool: true,
+                    });
+                  } else if (c.type === "text" && c.text && c.text.trim()) {
+                    lastAssistantText = c.text.trim();
+                  }
+                }
+              }
+            }
+
+            if (e.type === "result") {
+              totalCost = typeof e.total_cost_usd === "number" ? e.total_cost_usd : null;
+              durationMs = e.duration_ms || null;
+              numTurns = e.num_turns || 0;
+              isError = !!e.is_error;
+              resultText = typeof e.result === "string" ? e.result : null;
+              const u = e.usage;
+              if (u) {
+                usage = {
+                  input_tokens:                 parseInt(u.input_tokens) || 0,
+                  cache_creation_input_tokens:  parseInt(u.cache_creation_input_tokens) || 0,
+                  cache_read_input_tokens:      parseInt(u.cache_read_input_tokens) || 0,
+                  output_tokens:                parseInt(u.output_tokens) || 0,
+                  messages:                     numTurns,
+                };
+              }
             }
           }
+
           if (!firstTs || !totalCost) continue;
 
-          // Use scheduled start if this session matches a scheduled task (within 5s)
           const runMs = new Date(firstTs).getTime();
           const match = scheduledPairs.find(p => Math.abs(p.runMs - runMs) <= 5000);
-          const effectiveTs  = match ? match.schedTs : firstTs;
-          const effectiveEpoch = match ? match.schedMs : runMs;
+          const effectiveTs    = match?.schedTs   || firstTs;
+          const effectiveEpoch = match?.schedMs   || runMs;
+          const taskName       = match?.taskName  || "cowork-session";
+          const project        = "cowork/" + taskName;
+          const meta           = descriptors[item] || {};
+          const sessionId      = meta.cliSessionId || item;
 
-          entries.push({ ts: effectiveTs, epoch: effectiveEpoch, cost: totalCost });
+          // Display text: prefer the final assistant output over raw result field
+          const display = (lastAssistantText || resultText || taskName).slice(0, 500);
+
+          sessions.push({
+            // usageEntry fields (for buildWindowUsage)
+            ts: effectiveTs, epoch: effectiveEpoch, cost: totalCost,
+            // session fields (for tokens.sessions)
+            sessionId, project, taskName,
+            model: model || "cowork",
+            counts: usage || { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, messages: numTurns },
+            extraCost: 0,
+            firstTs: effectiveTs,
+            lastTs,
+            durationMs,
+            // history fields
+            turns: numTurns,
+            tokenCounts: usage,
+            turnDetails: toolCalls,
+            display,
+            timestamp: effectiveEpoch,
+            isCowork: true,
+          });
         } catch {}
       }
     }
   }
-  return entries;
+  return sessions;
 }
 
-function buildWindowUsage() {
+function buildWindowUsage(coworkSessions) {
   if (!fs.existsSync(PROJECTS_DIR)) return null;
 
   // Pass 1: collect all assistant usage entries and rate_limit entries
@@ -602,7 +678,7 @@ function buildWindowUsage() {
   }
 
   // Merge Cowork (local-agent-mode) sessions — treated identically to Code turns
-  for (const e of readCoworkUsageEntries()) usageEntries.push(e);
+  for (const s of (coworkSessions || [])) usageEntries.push({ ts: s.ts, epoch: s.epoch, cost: s.cost });
 
   if (!rateLimitHits.length) return null;
 
@@ -826,8 +902,8 @@ function buildWindowUsage() {
   };
 }
 
-function buildStats(events) {
-  const history = readJsonl(HISTORY_PATH);
+function buildStats(events, historyEntries = null) {
+  const history = historyEntries || readJsonl(HISTORY_PATH);
 
   const sessions = {};
   for (const h of history) {
@@ -863,6 +939,26 @@ function buildStats(events) {
   };
 }
 
+function buildCoworkToolEvents(coworkSessions) {
+  const events = [];
+  for (const s of (coworkSessions || [])) {
+    for (const t of (s.turnDetails || [])) {
+      if (!t?.isCoworkTool) continue;
+      events.push({
+        timestamp: t.ts || s.firstTs || s.ts,
+        event_type: "PreToolUse",
+        tool_name: t.toolName || "unknown",
+        tool_input: t.toolInput || "",
+        isCowork: true,
+        project: s.project,
+        sessionId: s.sessionId,
+        taskName: s.taskName,
+      });
+    }
+  }
+  return events;
+}
+
 function maybeCleanup(oldFiles) {
   if (!process.argv.includes("--cleanup")) return [];
   const removed = [];
@@ -890,7 +986,54 @@ function build() {
   const enrichResult = enrichHistory(history, tokens._prompts);
   delete tokens._prompts; // internal, don't ship
 
-  const windowUsage = buildWindowUsage();
+  // Cowork sessions — read once, used for window detection + data merging
+  const coworkSessions = readCoworkSessions();
+
+  // Merge Cowork into tokens.sessions (sorted by lastTs desc, cap at 100)
+  const coworkSessionEntries = coworkSessions.map(s => ({
+    sessionId: s.sessionId, project: s.project, model: s.model,
+    counts: s.counts, cost: s.cost, extraCost: 0,
+    firstTs: s.firstTs, lastTs: s.lastTs, isCowork: true,
+  }));
+  tokens.sessions = [...tokens.sessions, ...coworkSessionEntries]
+    .sort((a, b) => (b.lastTs || "").localeCompare(a.lastTs || ""))
+    .slice(0, 100);
+
+  // Merge Cowork into tokens.projects (aggregate cost + counts per task name)
+  const coworkProjects = {};
+  for (const s of coworkSessions) {
+    if (!coworkProjects[s.project]) {
+      coworkProjects[s.project] = { project: s.project, cost: 0, counts: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, messages: 0 }, isCowork: true };
+    }
+    const p = coworkProjects[s.project];
+    p.cost += s.cost;
+    if (s.counts) for (const k of Object.keys(p.counts)) p.counts[k] = (p.counts[k] || 0) + (s.counts[k] || 0);
+  }
+  tokens.projects = [...tokens.projects, ...Object.values(coworkProjects)]
+    .sort((a, b) => b.cost - a.cost);
+
+  // Merge Cowork runs into history as enriched entries
+  for (const s of coworkSessions) {
+    history.push({
+      display: s.display,
+      project: s.project,
+      sessionId: s.sessionId,
+      timestamp: s.timestamp,
+      cost: s.cost,
+      extraCost: 0,
+      turns: s.turns,
+      tokenCounts: s.tokenCounts,
+      turnDetails: s.turnDetails,
+      isCowork: true,
+    });
+  }
+
+  const coworkToolEvents = buildCoworkToolEvents(coworkSessions);
+  const mergedEvents = [...fresh.events, ...coworkToolEvents]
+    .filter(e => e.timestamp)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  const windowUsage = buildWindowUsage(coworkSessions);
 
   const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")) : {};
   if (config.extraSpentOverride != null) tokens.extraTotals.cost = config.extraSpentOverride;
@@ -913,9 +1056,9 @@ function build() {
     generatedAt: new Date().toISOString(),
     ...(config.extraPurchasedSeed != null ? { extraPurchasedSeed: config.extraPurchasedSeed } : {}),
     tokens,
-    stats: buildStats(fresh.events),
+    stats: buildStats(mergedEvents, history),
     history,
-    events: fresh.events,
+    events: mergedEvents,
     windowUsage,
     maintenance: {
       eventFiles: fresh.rotated,
