@@ -62,6 +62,7 @@
   .sidebar-project .sp-name-row { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
   .sidebar-project:hover { background: rgba(255,255,255,0.04); }
   .sidebar-project.active { background: rgba(88,166,255,0.08); border-left: 2px solid var(--blue); padding-left: 14px; }
+  .sidebar-project.hover-sync { background: rgba(88,166,255,0.14); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.35); }
   .sidebar-project .sp-name { font-size: 12px; color: var(--blue); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sidebar-project .sp-cost { font-size: 11px; font-weight: 600; color: var(--green); flex-shrink: 0; }
   .sidebar-project .sp-bar { flex: 0 0 40px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
@@ -80,6 +81,7 @@
   .session-item .cost-badge { color: var(--green); font-weight: 600; }
   .session-item.cowork { background: linear-gradient(90deg, var(--cowork-bg-strong) 0, rgba(188,140,255,0.05) 56px, transparent 100%); box-shadow: inset 3px 0 0 var(--cowork-border); }
   .session-item.cowork:hover, .session-item.cowork.active { background: linear-gradient(90deg, rgba(188,140,255,0.24) 0, rgba(188,140,255,0.08) 56px, transparent 100%); }
+  .session-item.hover-sync { background: rgba(88,166,255,0.10); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.28); }
   .session-item.cowork .project { color: var(--cowork-text); margin-bottom: 0; }
 
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
@@ -129,6 +131,7 @@
   .feed-item .project { color: var(--blue); }
   .feed-item { cursor: pointer; }
   .feed-item:hover { border-color: var(--muted); }
+  .feed-item.hover-sync { border-color: var(--blue); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.24); }
   .kind-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap; }
   .kind-badge.cowork { background: rgba(188,140,255,0.18); color: var(--cowork-text); border: 1px solid rgba(188,140,255,0.45); }
 
@@ -156,6 +159,7 @@
   .project-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); transition: background 0.3s; }
   .project-row:last-child { border-bottom: none; }
   .project-row.highlight { background: rgba(88,166,255,0.12); border-radius: 4px; }
+  .project-row.hover-sync { background: rgba(88,166,255,0.12); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.28); border-radius: 4px; }
   .project-row.cowork { background: linear-gradient(90deg, rgba(188,140,255,0.12) 0, rgba(188,140,255,0.04) 80px, transparent 100%); border-radius: 4px; }
   .project-bar-bg { flex: 1; background: var(--border); border-radius: 2px; height: 6px; overflow: hidden; }
   .project-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
@@ -166,6 +170,17 @@
   .token-box { background: var(--bg); border-radius: 6px; padding: 10px 12px; }
   .token-box .tval { font-size: 16px; font-weight: 700; }
   .token-box .tlabel { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .token-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+  .token-chip { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+  .token-chip .tlabel { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+  .token-chip .tval { font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .breakdown-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .breakdown-title-wrap { min-width: 0; }
+  .breakdown-subtitle { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .view-switcher { display: inline-flex; gap: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 3px; flex-shrink: 0; }
+  .view-switcher button { padding: 4px 10px; border: none; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; background: transparent; color: var(--muted); }
+  .view-switcher button.active { background: var(--border); color: var(--text); }
+  .breakdown-note { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
 
   .no-data { color: var(--muted); font-size: 13px; padding: 40px; text-align: center; }
 
@@ -232,7 +247,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.13.0</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.16.0</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -253,7 +268,7 @@
     <div id="filterBar"></div>
     <div class="tabs">
       <div class="tab" onclick="showTab('overview')">Overview</div>
-      <div class="tab" onclick="showTab('cost')">Token Usage</div>
+      <div class="tab" onclick="showTab('cost')">Cost &amp; Tokens</div>
       <div class="tab" onclick="showTab('tools')">Tool Usage</div>
     </div>
     <div id="tabContent"></div>
@@ -281,6 +296,8 @@ let state = {
   toolRenderedCount: 0,
   sidebarProjectSort: 'top',
   sidebarSessionSort: 'top',
+  costBreakdown: localStorage.getItem('claude-tracker-costBreakdown') || 'project',
+  hoverProject: null,
 };
 
 // --- helpers for computing per-project per-day data ---
@@ -486,6 +503,24 @@ function onProjectDblClick(projectPath) {
   }, 50);
 }
 
+function setHoverProject(projectPath) {
+  state.hoverProject = projectPath || null;
+  applyHoverProjectSync();
+}
+
+function clearHoverProject(projectPath) {
+  if (projectPath && state.hoverProject !== projectPath) return;
+  state.hoverProject = null;
+  applyHoverProjectSync();
+}
+
+function applyHoverProjectSync() {
+  const hovered = state.hoverProject;
+  document.querySelectorAll('[data-project]').forEach(el => {
+    el.classList.toggle('hover-sync', !!hovered && el.dataset.project === hovered);
+  });
+}
+
 // --- rendering ---
 function loadAll() {
   const d = window.TRACKER_DATA;
@@ -582,6 +617,7 @@ function renderTab(name) {
   else if (name === 'cost') renderCost();
   else if (name === 'feed') renderFeed();
   else if (name === 'tools') renderTools();
+  applyHoverProjectSync();
 }
 
 function sidebarTab(label, current, value, setter) {
@@ -648,7 +684,7 @@ function renderSidebar() {
       const badge = p.isCowork ? renderKindBadge('Scheduled') : '';
       const lastActive = projLastTs[p.project] ? formatSessionDate(new Date(projLastTs[p.project])) : '';
       const tokLine = p.counts ? `<div style="font-size:10px;color:var(--muted)">${fmtNum(p.counts.input_tokens)} in · ${fmtNum(p.counts.output_tokens)} out${lastActive ? ' · ' + lastActive : ''}</div>` : '';
-      return `<div class="${klass}" onclick="onProjectClick('${escAttr(p.project)}')" title="Double-click to jump to Token Usage">
+      return `<div class="${klass}" data-project="${escAttr(p.project)}" onclick="onProjectClick('${escAttr(p.project)}')" onmouseenter="setHoverProject('${escAttr(p.project)}')" onmouseleave="clearHoverProject('${escAttr(p.project)}')" title="Double-click to jump to Token Usage">
         <div class="sp-row">
           <div class="sp-name-row">
             <div class="sp-name" title="${escHtml(p.project)}">${escHtml(name)}</div>
@@ -681,6 +717,7 @@ function renderSidebar() {
 
   if (!sessions.length) {
     sessEl.innerHTML = '<div class="no-data">No sessions</div>';
+    applyHoverProjectSync();
     return;
   }
   sessEl.innerHTML = sessions.map(s => {
@@ -693,7 +730,7 @@ function renderSidebar() {
     const preview = s.isCowork
       ? `Scheduled run · ${s.counts?.messages || 0} turns`
       : `${sessionPreview} · ${s.counts?.messages || 0} turns`;
-    return `<div class="session-item${active}${s.isCowork ? ' cowork' : ''}" onclick="onSessionClick('${s.sessionId}')">
+    return `<div class="session-item${active}${s.isCowork ? ' cowork' : ''}" data-project="${escAttr(s.project || '')}" onclick="onSessionClick('${s.sessionId}')" onmouseenter="setHoverProject('${escAttr(s.project || '')}')" onmouseleave="clearHoverProject('${escAttr(s.project || '')}')">
       <div class="session-topline">
         <div class="project">${escHtml(proj || s.project || '')}</div>
         ${badge}
@@ -702,6 +739,7 @@ function renderSidebar() {
       <div class="meta"><span class="cost-badge">$${cost.toFixed(4)}</span><span style="color:var(--muted)">${fmtNum(s.counts?.input_tokens||0)} in · ${fmtNum(s.counts?.output_tokens||0)} out</span><span>${when}</span></div>
     </div>`;
   }).join('');
+  applyHoverProjectSync();
 }
 
 function fmtHour(h) {
@@ -1097,6 +1135,7 @@ function renderOverview() {
       ${feedHtml || '<div class="no-data">No matching commands</div>'}
     </div>
   `;
+  applyHoverProjectSync();
 }
 
 function renderCost() {
@@ -1112,7 +1151,7 @@ function renderCost() {
     const pct = Math.round((p.cost / maxCost) * 100);
     const isFiltered = state.filterProject === p.project;
     const badge = p.isCowork ? renderKindBadge('Scheduled') : '';
-    return `<div class="project-row${isFiltered ? ' highlight' : ''}${p.isCowork ? ' cowork' : ''}" data-project="${escAttr(p.project)}">
+    return `<div class="project-row${isFiltered ? ' highlight' : ''}${p.isCowork ? ' cowork' : ''}" data-project="${escAttr(p.project)}" onmouseenter="setHoverProject('${escAttr(p.project)}')" onmouseleave="clearHoverProject('${escAttr(p.project)}')">
       <div class="project-name" title="${p.project}">${escHtml(name)}</div>
       ${badge}
       <div class="project-bar-bg"><div class="project-bar-fill" style="width:${pct}%"></div></div>
@@ -1120,7 +1159,7 @@ function renderCost() {
     </div>`;
   }).join('');
 
-  // Per day table (last 30 days)
+  // Per day table (last 30 days, PT)
   const dayKeys = Object.keys(t.perDay || {}).sort().reverse().slice(0, 30);
   const dayRows = dayKeys.map(d => {
     const day = t.perDay[d];
@@ -1143,7 +1182,7 @@ function renderCost() {
     const date = h.timestamp ? new Date(h.timestamp).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' }) : '';
     const pct = Math.round((h.cost / maxCmdCost) * 100);
     const turns = h.turns ? `${h.turns}t` : '';
-    return `<div class="project-row">
+    return `<div class="project-row" data-project="${escAttr(h.project || '')}" onmouseenter="setHoverProject('${escAttr(h.project || '')}')" onmouseleave="clearHoverProject('${escAttr(h.project || '')}')">
       <div class="project-name" title="${escAttr(label)}" style="max-width:340px">${escHtml(label.length > 60 ? label.slice(0, 60) + '…' : label)}</div>
       <div class="project-bar-bg" style="flex:1"><div class="project-bar-fill" style="width:${pct}%"></div></div>
       <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
@@ -1153,29 +1192,52 @@ function renderCost() {
     </div>`;
   }).join('');
 
+  let breakdownTitle = 'By Project';
+  let breakdownNote = 'All-time estimated API-equivalent cost aggregated by project.';
+  let breakdownRows = projectRows || '<div class="no-data">No data</div>';
+
+  if (state.costBreakdown === 'day') {
+    breakdownTitle = 'By Day';
+    breakdownNote = 'Last 30 PT days. This differs from the Overview chart, which only shows the last 14 days and mixes prompt activity with cost.';
+    breakdownRows = dayRows || '<div class="no-data">No data</div>';
+  } else if (state.costBreakdown === 'command') {
+    breakdownTitle = 'By Command';
+    breakdownNote = 'All-time prompts sorted by estimated API-equivalent cost, highest first.';
+    breakdownRows = cmdRows || '<div class="no-data">No data</div>';
+  }
+
   document.getElementById('tabContent').innerHTML = `
     <div class="card">
-      <h3>Token Totals (all time)</h3>
-      <div class="token-detail">
-        <div class="token-box"><div class="tval blue">${fmtNum(totals.input_tokens)}</div><div class="tlabel">Input tokens</div></div>
-        <div class="token-box"><div class="tval blue">${fmtNum(totals.output_tokens)}</div><div class="tlabel">Output tokens</div></div>
-        <div class="token-box"><div class="tval purple">${fmtNum(totals.cache_creation_input_tokens)}</div><div class="tlabel">Cache written</div></div>
-        <div class="token-box"><div class="tval purple">${fmtNum(totals.cache_read_input_tokens)}</div><div class="tlabel">Cache read</div></div>
+      <div class="breakdown-head">
+        <div class="breakdown-title-wrap">
+          <h3 style="margin-bottom:0">Token Totals</h3>
+          <div class="breakdown-subtitle">Aggregated breakdown of token volume and estimated API-equivalent cost</div>
+        </div>
+      </div>
+      <div class="token-strip">
+        <div class="token-chip"><div class="tlabel">Input Tokens</div><div class="tval blue">${fmtNum(totals.input_tokens)}</div></div>
+        <div class="token-chip"><div class="tlabel">Output Tokens</div><div class="tval blue">${fmtNum(totals.output_tokens)}</div></div>
+        <div class="token-chip"><div class="tlabel">Cache Written</div><div class="tval purple">${fmtNum(totals.cache_creation_input_tokens)}</div></div>
+        <div class="token-chip"><div class="tlabel">Cache Read</div><div class="tval purple">${fmtNum(totals.cache_read_input_tokens)}</div></div>
       </div>
     </div>
     <div class="card">
-      <h3>Equiv. API Cost by Project <span style="font-size:11px;font-weight:400;color:var(--muted)">(subscription users: for reference only)</span></h3>
-      ${projectRows || '<div class="no-data">No data</div>'}
-    </div>
-    <div class="card">
-      <h3>Equiv. API Cost by Day <span style="font-size:11px;font-weight:400;color:var(--muted)">(subscription users: for reference only)</span></h3>
-      ${dayRows || '<div class="no-data">No data</div>'}
-    </div>
-    <div class="card">
-      <h3>Equiv. API Cost by Command <span style="font-size:11px;font-weight:400;color:var(--muted)">all time · expensive first</span></h3>
-      ${cmdRows || '<div class="no-data">No data</div>'}
+      <div class="breakdown-head">
+        <div class="breakdown-title-wrap">
+          <h3 style="margin-bottom:0">${breakdownTitle} <span style="font-size:11px;font-weight:400;color:var(--muted)">(subscription users: for reference only)</span></h3>
+          <div class="breakdown-subtitle">Where did usage go?</div>
+        </div>
+        <div class="view-switcher">
+          <button class="${state.costBreakdown === 'project' ? 'active' : ''}" onclick="setCostBreakdown('project')">By Project</button>
+          <button class="${state.costBreakdown === 'day' ? 'active' : ''}" onclick="setCostBreakdown('day')">By Day</button>
+          <button class="${state.costBreakdown === 'command' ? 'active' : ''}" onclick="setCostBreakdown('command')">By Command</button>
+        </div>
+      </div>
+      <div class="breakdown-note">${breakdownNote}</div>
+      ${breakdownRows}
     </div>
   `;
+  applyHoverProjectSync();
 }
 
 // Track which feed items are expanded (by index in the rendered list)
@@ -1282,7 +1344,7 @@ function renderFeedItems(items) {
     const badge = h.isCowork ? renderKindBadge('Scheduled Task') : '';
     const sessionPreview = h.sessionId ? `${h.sessionId.slice(0, 8)}…` : '—';
 
-    return `<div class="feed-item${h.isCowork ? ' cowork' : ''}" style="border-left:3px solid ${borderColor}" onclick="toggleFeedItem('${itemId}')">
+    return `<div class="feed-item${h.isCowork ? ' cowork' : ''}" data-project="${escAttr(h.project || '')}" style="border-left:3px solid ${borderColor}" onclick="toggleFeedItem('${itemId}')" onmouseenter="setHoverProject('${escAttr(h.project || '')}')" onmouseleave="clearHoverProject('${escAttr(h.project || '')}')">
       <div class="feed-head">
         ${expandIcon}<div class="feed-copy">
           <div class="feed-title-row">
@@ -1308,9 +1370,11 @@ function renderFeed() {
   const searchBox = `<div style="margin-bottom:12px"><input type="text" id="feedSearchInput" placeholder="Search commands..." value="${searchVal}" oninput="onFeedSearch(this.value)" style="width:100%;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;outline:none;font-family:inherit;" /></div>`;
   if (!items.length) {
     document.getElementById('tabContent').innerHTML = searchBox + '<div class="no-data">No matching commands</div>';
+    applyHoverProjectSync();
     return;
   }
   document.getElementById('tabContent').innerHTML = searchBox + renderFeedItems(items);
+  applyHoverProjectSync();
   // Restore cursor position
   const inp = document.getElementById('feedSearchInput');
   if (inp) { inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length; }
@@ -1334,6 +1398,12 @@ function setSidebarProjectSort(val) {
 function setSidebarSessionSort(val) {
   state.sidebarSessionSort = val;
   renderSidebar();
+}
+
+function setCostBreakdown(val) {
+  state.costBreakdown = val;
+  localStorage.setItem('claude-tracker-costBreakdown', val);
+  renderCost();
 }
 
 function jumpToToolRow(targetIdx) {
@@ -1398,7 +1468,7 @@ function toolEventRow({ e, winIdx }, idx) {
   const color = WIN_COLORS[winIdx % WIN_COLORS.length];
   const badge = e.isCowork ? renderKindBadge('Scheduled Task') : '';
   const project = e.project ? `<span style="color:var(--cowork-text)">${escHtml((e.project || '').split('/').slice(-2).join('/'))}</span>` : '';
-  return `<div class="feed-item${e.isCowork ? ' cowork' : ''}" data-idx="${idx}" style="border-left:3px solid ${color}">
+  return `<div class="feed-item${e.isCowork ? ' cowork' : ''}" data-idx="${idx}" data-project="${escAttr(e.project || '')}" style="border-left:3px solid ${color}" onmouseenter="setHoverProject('${escAttr(e.project || '')}')" onmouseleave="clearHoverProject('${escAttr(e.project || '')}')">
     <div class="prompt-meta" style="margin:0">
       <span style="color:var(--muted)">${new Date(e.timestamp).toLocaleString()}</span>
       ${badge}
@@ -1418,6 +1488,7 @@ function renderTools() {
 
   if (!entries.length) {
     document.getElementById('tabContent').innerHTML = `<div class="no-data">No tool events yet.</div>`;
+    applyHoverProjectSync();
     return;
   }
 
@@ -1466,6 +1537,7 @@ function renderTools() {
     <div id="tool-feed" class="feed">${firstBatch || '<div class="no-data">No events</div>'}</div>
     <div id="tool-sentinel" style="height:1px"></div>
   `;
+  applyHoverProjectSync();
 
   let offset = TOOL_PAGE;
   if (offset >= allAnnotated.length) return;
