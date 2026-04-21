@@ -247,7 +247,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.16.0</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.18.0</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -337,11 +337,34 @@ function filteredSessions() {
   const sessions = state.tokens?.sessions || [];
   return sessions.filter(s => {
     if (state.filterProject && s.project !== state.filterProject) return false;
+    if (state.filterSession && s.sessionId !== state.filterSession) return false;
     if (state.filterDay) {
       // session spans days; include if its range overlaps the filter day
       const first = s.firstTs ? s.firstTs.slice(0, 10) : '';
       const last = s.lastTs ? s.lastTs.slice(0, 10) : '';
       if (state.filterDay < first || state.filterDay > last) return false;
+    }
+    return true;
+  });
+}
+
+function eventProjectOf(e) {
+  return e.project || e.cwd || '';
+}
+
+function eventSessionOf(e) {
+  return e.sessionId || e.session_id || '';
+}
+
+function filteredEvents() {
+  return state.events.filter(e => {
+    const project = eventProjectOf(e);
+    const sessionId = eventSessionOf(e);
+    if (state.filterProject && project !== state.filterProject) return false;
+    if (state.filterSession && sessionId !== state.filterSession) return false;
+    if (state.filterDay) {
+      const d = e.timestamp ? new Date(e.timestamp).toISOString().slice(0, 10) : null;
+      if (d !== state.filterDay) return false;
     }
     return true;
   });
@@ -1142,8 +1165,63 @@ function renderCost() {
   const t = state.tokens;
   if (!t) { document.getElementById('tabContent').innerHTML = '<div class="no-data">Loading...</div>'; return; }
 
-  const totals = t.totals || {};
-  const projects = t.projects || [];
+  const activeHistory = filteredHistory();
+  const useFilteredData = !!(state.filterProject || state.filterSession || state.filterDay);
+
+  let totals;
+  let projects;
+  let dayMap;
+
+  if (useFilteredData) {
+    totals = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, messages: 0 };
+    const projectMap = {};
+    dayMap = {};
+
+    for (const h of activeHistory) {
+      const c = h.tokenCounts || {};
+      totals.input_tokens += c.input_tokens || 0;
+      totals.output_tokens += c.output_tokens || 0;
+      totals.cache_creation_input_tokens += c.cache_creation_input_tokens || 0;
+      totals.cache_read_input_tokens += c.cache_read_input_tokens || 0;
+      totals.messages += c.messages || h.turns || 0;
+
+      const proj = h.project || '';
+      if (!projectMap[proj]) {
+        projectMap[proj] = {
+          project: proj,
+          cost: 0,
+          counts: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, messages: 0 },
+          isCowork: !!h.isCowork,
+        };
+      }
+      projectMap[proj].cost += typeof h.cost === 'number' ? h.cost : 0;
+      projectMap[proj].counts.input_tokens += c.input_tokens || 0;
+      projectMap[proj].counts.output_tokens += c.output_tokens || 0;
+      projectMap[proj].counts.cache_creation_input_tokens += c.cache_creation_input_tokens || 0;
+      projectMap[proj].counts.cache_read_input_tokens += c.cache_read_input_tokens || 0;
+      projectMap[proj].counts.messages += c.messages || h.turns || 0;
+      if (h.isCowork) projectMap[proj].isCowork = true;
+
+      const day = h.timestamp ? new Date(h.timestamp).toISOString().slice(0, 10) : null;
+      if (!day) continue;
+      if (!dayMap[day]) {
+        dayMap[day] = {
+          cost: 0,
+          counts: { output_tokens: 0, cache_read_input_tokens: 0 },
+        };
+      }
+      dayMap[day].cost += typeof h.cost === 'number' ? h.cost : 0;
+      dayMap[day].counts.output_tokens += c.output_tokens || 0;
+      dayMap[day].counts.cache_read_input_tokens += c.cache_read_input_tokens || 0;
+    }
+
+    projects = Object.values(projectMap).sort((a, b) => b.cost - a.cost);
+  } else {
+    totals = t.totals || {};
+    projects = t.projects || [];
+    dayMap = t.perDay || {};
+  }
+
   const maxCost = Math.max(0.0001, projects[0]?.cost || 0);
 
   const projectRows = projects.map(p => {
@@ -1160,9 +1238,9 @@ function renderCost() {
   }).join('');
 
   // Per day table (last 30 days, PT)
-  const dayKeys = Object.keys(t.perDay || {}).sort().reverse().slice(0, 30);
+  const dayKeys = Object.keys(dayMap || {}).sort().reverse().slice(0, 30);
   const dayRows = dayKeys.map(d => {
-    const day = t.perDay[d];
+    const day = dayMap[d];
     return `<div class="row">
       <span class="key">${d}</span>
       <span style="display:flex;gap:24px;align-items:center">
@@ -1173,7 +1251,7 @@ function renderCost() {
   }).join('');
 
   // Cost by command — all history sorted expensive-first
-  const cmdHistory = [...(state.history || [])].filter(h => h.cost > 0)
+  const cmdHistory = [...activeHistory].filter(h => h.cost > 0)
     .sort((a, b) => b.cost - a.cost);
   const maxCmdCost = cmdHistory[0]?.cost || 0.0001;
   const cmdRows = cmdHistory.map(h => {
@@ -1211,7 +1289,7 @@ function renderCost() {
       <div class="breakdown-head">
         <div class="breakdown-title-wrap">
           <h3 style="margin-bottom:0">Token Totals</h3>
-          <div class="breakdown-subtitle">Aggregated breakdown of token volume and estimated API-equivalent cost</div>
+          <div class="breakdown-subtitle">Aggregated breakdown of token volume and estimated API-equivalent cost${useFilteredData ? ' · filtered' : ''}</div>
         </div>
       </div>
       <div class="token-strip">
@@ -1483,16 +1561,21 @@ function toolEventRow({ e, winIdx }, idx) {
 function renderTools() {
   if (state.toolObserver) { state.toolObserver.disconnect(); state.toolObserver = null; }
 
-  const { toolCounts = {} } = state.stats || {};
+  const filtered = filteredEvents();
+  const toolCounts = {};
+  for (const e of filtered) {
+    const tool = e.tool_name || e.toolName || 'unknown';
+    toolCounts[tool] = (toolCounts[tool] || 0) + 1;
+  }
   const entries = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]);
 
   if (!entries.length) {
-    document.getElementById('tabContent').innerHTML = `<div class="no-data">No tool events yet.</div>`;
+    document.getElementById('tabContent').innerHTML = `<div class="no-data">No matching tool events.</div>`;
     applyHoverProjectSync();
     return;
   }
 
-  const allAnnotated = annotateToolWindows([...state.events].reverse());
+  const allAnnotated = annotateToolWindows([...filtered].reverse());
 
   // Compute targets for quick-jump links (newest-first list, so "older" = higher index)
   const dws = window.TRACKER_DATA?.windowUsage?.detectedWindows || [];
@@ -1531,7 +1614,7 @@ function renderTools() {
   document.getElementById('tabContent').innerHTML = `
     <div class="tools-grid">${cards}</div>
     <div class="chart-wrap" style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
-      <h3 style="margin:0">Tool events <span id="tool-feed-count" style="font-weight:400;color:var(--muted);font-size:13px">(${state.toolRenderedCount} of ${allAnnotated.length})</span></h3>
+      <h3 style="margin:0">Tool events${hasFilters() ? ' · filtered' : ''} <span id="tool-feed-count" style="font-weight:400;color:var(--muted);font-size:13px">(${state.toolRenderedCount} of ${allAnnotated.length})</span></h3>
       ${quickLinks}
     </div>
     <div id="tool-feed" class="feed">${firstBatch || '<div class="no-data">No events</div>'}</div>

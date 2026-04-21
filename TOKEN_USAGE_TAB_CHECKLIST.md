@@ -4,6 +4,7 @@ Use this file to mark items and add notes inline.
 
 Status:
 - Implemented in current dashboard: tab rename, single-row totals, switcher for project/day/command, subtitle
+- Implemented in current dashboard: `Cost & Tokens` and `Tool Usage` now react to left-menu project/session selection
 - Not implemented yet: `By Session`, moving breakdowns into Overview
 
 Quick links:
@@ -64,3 +65,11 @@ Quick links:
 
 - [ ] Rework the tab so it answers one clear question: `Where did my usage go?`
   Notes:
+
+## Follow-up
+
+- [x] Filter `Cost & Tokens` when selecting a project or session in the left menu
+  Notes: implemented
+
+- [x] Filter `Tool Usage` when selecting a project or session in the left menu
+  Notes: implemented
