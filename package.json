@@ -1,6 +1,6 @@
 {
   "name": "claude-tracker",
-  "version": "3.19.0",
+  "version": "3.21.0",
   "description": "Track Claude Code commands and token usage — open report.html in any browser",
   "scripts": {
     "build": "node scripts/build.js",

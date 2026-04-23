@@ -252,7 +252,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.19.0</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.21.0</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -901,7 +901,7 @@ function renderWindowGauge() {
 
   if (w.weekly && w.weekly.ceiling) {
     const wk = w.weekly;
-    const dayNames = ['Thu','Fri','Sat','Sun','Mon','Tue','Wed'];
+    const dayNames = ['Sat','Sun','Mon','Tue','Wed','Thu','Fri'];
     if (wk.weekDays && wk.weekDays.length === 7) {
       const dayAllotment = w.daily?.ceiling || (wk.ceiling / 7);
       const todayStr = laDateStr(new Date());
@@ -1423,7 +1423,7 @@ function renderFeedItems(items) {
       const extraNote = extraCost > 0 ? `  ·  $${extraCost.toFixed(3)} EXTRA CREDIT` : '';
       const tip = `${turns} turn${turns === 1 ? '' : 's'}  ·  ${fmtNum(c.input_tokens)} in  ·  ${fmtNum(c.output_tokens)} out  ·  ${fmtNum(c.cache_read_input_tokens)} cache read  ·  ${fmtNum(c.cache_creation_input_tokens)} cache write${extraNote}`;
       const extraBadge = extraCost > 0 ? '<span style="color:var(--red);font-size:9px;margin-left:4px">EXTRA</span>' : '';
-      pill = `<span class="cost-pill ${cls}" title="${tip}">${label}<span style="font-weight:400;opacity:0.7"> · ${turns}t</span>${extraBadge}</span>`;
+      pill = `<span class="cost-pill ${cls}" title="${tip}">${label}<span style="font-weight:400;opacity:0.7"> · ${turns} turns</span>${extraBadge}</span>`;
 
       const outputTokens = c.output_tokens || 0;
       const cacheWriteTokens = c.cache_creation_input_tokens || 0;
@@ -1439,7 +1439,6 @@ function renderFeedItems(items) {
         costlyClass = ' costly';
         costlyBadge = renderKindBadge('Expensive', 'costly');
         costlyReason = reason ? renderKindBadge(reason, 'cost-reason') : '';
-        signalParts.push(`${turns}t`);
         if (outputTokens >= 50000) signalParts.push(`${fmtNum(outputTokens)} out`);
         if (cacheWriteTokens >= 100000) signalParts.push(`${fmtNum(cacheWriteTokens)} cache write`);
         if (extraCost > 0) signalParts.push(`$${extraCost.toFixed(2)} extra`);
@@ -1449,6 +1448,33 @@ function renderFeedItems(items) {
 
     const expandIcon = h.turnDetails && h.turnDetails.length ? `<span style="color:var(--muted);font-size:10px;margin-right:4px">${isExpanded ? '▼' : '▶'}</span>` : '';
     const details = isExpanded ? renderTurnDetails(h.turnDetails) : '';
+
+    let costTips = '';
+    if (isExpanded && typeof h.cost === 'number') {
+      const cost = h.cost, turns = h.turns || 0;
+      const c = h.tokenCounts || {};
+      const outputTokens = c.output_tokens || 0;
+      const cacheWriteTokens = c.cache_creation_input_tokens || 0;
+      const cacheReadTokens = c.cache_read_input_tokens || 0;
+      const extraCost = h.extraCost || 0;
+      const isCostly = cost >= 0.10 || extraCost > 0 || outputTokens >= 100000 || cacheWriteTokens >= 500000 || turns >= 12;
+      if (isCostly) {
+        const tips = [];
+        if (extraCost > 0) tips.push('Extra credit was charged — this ran after hitting a rate-limit window. Spreading work across windows or waiting for a reset avoids extra-credit charges.');
+        if (cacheWriteTokens >= 200000) tips.push('Large cache-write volume. Shorter, stable system prompts and reusing existing context reduce cache-write charges on future turns.');
+        if (outputTokens >= 100000) tips.push('High output volume. Ask Claude to be concise, use bullet points, or split a large task into focused sub-prompts to reduce output tokens.');
+        if (turns >= 12) tips.push('Long session with many turns. Front-loading context and instructions into fewer, more specific prompts reduces per-turn overhead.');
+        if (cacheReadTokens === 0 && cacheWriteTokens >= 50000) tips.push('Cache was written but not read. Prompt caching pays off when the same prefix is reused across multiple turns.');
+        if (cost >= 0.10 && tips.length === 0) tips.push('High total cost. Try breaking this task into smaller, focused prompts to avoid token overhead from accumulated context.');
+        if (tips.length) {
+          costTips = `<div style="margin-top:10px;padding:10px 12px;background:rgba(217,119,6,0.07);border:1px solid rgba(217,119,6,0.22);border-radius:6px;font-size:11px">
+            <div style="font-weight:700;color:var(--accent);margin-bottom:6px;font-size:11px">Cost-saving suggestions</div>
+            ${tips.map(t => `<div style="color:var(--muted);line-height:1.5;margin-bottom:4px">• ${t}</div>`).join('')}
+          </div>`;
+        }
+      }
+    }
+
     const badge = h.isCowork ? renderKindBadge('Scheduled Task') : '';
     const sessionPreview = h.sessionId ? `${h.sessionId.slice(0, 8)}…` : '—';
 
@@ -1470,6 +1496,7 @@ function renderFeedItems(items) {
         </div>
         ${pill}
       </div>
+      ${costTips}
       ${details}
     </div>`;
   }).join('')}</div>`;

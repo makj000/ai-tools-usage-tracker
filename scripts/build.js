@@ -776,13 +776,13 @@ function buildWindowUsage(coworkSessions) {
   const dailyUsage = dailyCosts[todayLA] || 0;
 
   // --- Weekly ---
-  // Week key based on Thursday reset: weeks run Thu–Wed.
-  // Returns the date string (YYYY-MM-DD) of the Thursday that started the week.
+  // Week key based on Saturday reset: weeks run Sat–Fri.
+  // Returns the date string (YYYY-MM-DD) of the Saturday that started the week.
   function weekKey(dateStr) {
     const d = new Date(dateStr + "T12:00:00Z");
-    // getUTCDay(): Sun=0, Mon=1, ..., Thu=4, ..., Wed=3
-    // Distance back to most-recent Thursday: (day - 4 + 7) % 7
-    const daysBack = (d.getUTCDay() - 4 + 7) % 7;
+    // getUTCDay(): Sun=0, Mon=1, ..., Sat=6, Fri=5
+    // Distance back to most-recent Saturday: (day - 6 + 7) % 7
+    const daysBack = (d.getUTCDay() - 6 + 7) % 7;
     d.setUTCDate(d.getUTCDate() - daysBack);
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`;
   }
@@ -804,7 +804,7 @@ function buildWindowUsage(coworkSessions) {
   const currentWeek = weekKey(todayLA);
   const weeklyUsage = weeklyCosts[currentWeek] || 0;
 
-  // Per-day breakdown for the current week (Thu–Wed, 7 days)
+  // Per-day breakdown for the current week (Sat–Fri, 7 days)
   const weekDays = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(currentWeek + "T12:00:00Z");
     d.setUTCDate(d.getUTCDate() + i);
