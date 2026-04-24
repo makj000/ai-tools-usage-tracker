@@ -260,7 +260,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.21.3</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.22.0</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -1071,8 +1071,8 @@ function renderExtraGauge() {
     const balBarPct = Math.min(balPct, 100);
     const balCls = balPct < 50 ? 'low' : balPct < 85 ? 'mid' : 'high';
     barFill = `<div class="wg-bar-fill ${balCls}" style="width:${balBarPct}%;background:var(--red)"></div>`;
-    barLabel = `<span class="wg-current" style="color:${balanceColor}">$${remaining.toFixed(2)} remaining (${balPct}% used)</span>`;
-    barRight = `<span class="wg-ceiling">$${extraTotal.toFixed(2)} used of $${purchased.toFixed(2)} purchased</span>`;
+    barLabel = `<span class="wg-current" style="color:var(--red)">$${extraTotal.toFixed(2)} used</span>`;
+    barRight = `<span class="wg-ceiling" style="color:${balanceColor}">$${remaining.toFixed(2)} remaining</span>`;
   } else {
     barFill = `<div class="wg-bar-fill ${cls}" style="width:${barPct}%;background:var(--red)"></div>`;
     barLabel = `<span class="wg-current" style="color:var(--red)">$${monthExtra.toFixed(2)} this month (${pct}% of $${subCost} subscription)</span>`;
@@ -1082,7 +1082,7 @@ function renderExtraGauge() {
   return `<div class="window-gauge">
     <div class="wg-header">
       <span style="display:flex;align-items:center;gap:6px">
-        <span class="wg-title" style="color:var(--red)">Extra Credit Usage</span>
+        <span class="wg-title" style="color:var(--red)">Extra Credit Usage</span>${hasBalance ? `<span style="font-size:11px;color:var(--muted);font-weight:400">$${purchased.toFixed(2)} purchased</span>` : ''}
         ${(() => {
           const w = window.TRACKER_DATA?.windowUsage;
           const nowMs2 = Date.now();
