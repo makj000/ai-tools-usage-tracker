@@ -63,6 +63,7 @@
   .sidebar-project:hover { background: rgba(255,255,255,0.04); }
   .sidebar-project.active { background: rgba(88,166,255,0.08); border-left: 2px solid var(--blue); padding-left: 14px; }
   .sidebar-project.hover-sync { background: rgba(88,166,255,0.14); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.35); }
+  .sidebar-project.day-hover-sync { background: rgba(88,166,255,0.14); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.35); }
   .sidebar-project .sp-name { font-size: 12px; color: var(--blue); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sidebar-project .sp-cost { font-size: 11px; font-weight: 600; color: var(--green); flex-shrink: 0; }
   .sidebar-project .sp-bar { flex: 0 0 40px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
@@ -82,6 +83,7 @@
   .session-item.cowork { background: linear-gradient(90deg, var(--cowork-bg-strong) 0, rgba(188,140,255,0.05) 56px, transparent 100%); box-shadow: inset 3px 0 0 var(--cowork-border); }
   .session-item.cowork:hover, .session-item.cowork.active { background: linear-gradient(90deg, rgba(188,140,255,0.24) 0, rgba(188,140,255,0.08) 56px, transparent 100%); }
   .session-item.hover-sync { background: rgba(88,166,255,0.10); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.28); }
+  .session-item.day-hover-sync { background: rgba(88,166,255,0.10); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.28); }
   .session-item.cowork .project { color: var(--cowork-text); margin-bottom: 0; }
 
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
@@ -225,6 +227,12 @@
   .wk-day-label { font-size: 9px; color: var(--muted); text-align: center; padding-top: 2px; }
   .wk-slot:hover .wk-day-label { color: var(--text); font-weight: 700; }
   .wk-slot.wk-current .wk-day-label { color: var(--blue); }
+  .wk-slot.day-hover-sync .wk-bar-part { filter: brightness(1.5); outline: 1px solid var(--blue); outline-offset: 1px; }
+  .wk-slot.day-hover-sync .wk-day-label { color: var(--blue); font-weight: 700; }
+  .bar-col.day-hover-sync { background: rgba(88,166,255,0.10); border-radius: 3px; }
+  .bar-col.day-hover-sync .bar { opacity: 1; }
+  .bar-col.day-hover-sync .bar-label { color: var(--blue); font-weight: 700; }
+  .feed-item.day-hover-sync { border-color: var(--blue) !important; box-shadow: inset 0 0 0 1px rgba(88,166,255,0.28) !important; }
 
   .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
   .tab { padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; transition: color 0.1s; }
@@ -252,7 +260,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.21.0</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.21.3</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -303,6 +311,7 @@ let state = {
   sidebarSessionSort: 'top',
   costBreakdown: localStorage.getItem('claude-tracker-costBreakdown') || 'project',
   hoverProject: null,
+  hoverDay: null,
 };
 
 // --- helpers for computing per-project per-day data ---
@@ -444,7 +453,7 @@ function buildDualChart(labels, aValues, bValues, cValues, fmtA, fmtB, fmtC) {
     const dateLabel = lbl.length === 10 ? lbl.slice(5).replace('-', '/') : lbl;
     const activeClass = state.filterDay === lbl ? 'active-bar' : '';
     const tip = `${lbl}: ${fmtA(a)} prompts · ${fmtB(b)}${c > 0 ? ' · ' + fmtC(c) + ' extra' : ''}`;
-    return `<div class="bar-col ${activeClass}" style="justify-content:flex-start" title="${tip}" onclick="onBarClick('${lbl}')">
+    return `<div class="bar-col ${activeClass}" data-day="${lbl}" onmouseenter="setHoverDay('${lbl}')" onmouseleave="clearHoverDay()" style="justify-content:flex-start" title="${tip}" onclick="onBarClick('${lbl}')">
       <div style="display:flex;align-items:flex-end;gap:1px;width:100%;height:${CHART_H}px">
         <div class="bar" style="height:${hA}px;flex:1"></div>
         <div class="bar green" style="height:${hB}px;flex:1"></div>
@@ -547,6 +556,35 @@ function applyHoverProjectSync() {
   document.querySelectorAll('[data-project]').forEach(el => {
     el.classList.toggle('hover-sync', !!hovered && el.dataset.project === hovered);
   });
+  applyHoverDaySync();
+}
+
+function applyHoverDaySync() {
+  const hovered = state.hoverDay;
+  document.querySelectorAll('[data-day]').forEach(el => {
+    el.classList.toggle('day-hover-sync', !!hovered && el.dataset.day === hovered);
+  });
+  // Sidebar project rows: highlight any project that had activity on hovered day
+  if (hovered && state.tokens) {
+    const pdMap = buildProjectDayMap();
+    document.querySelectorAll('.sidebar-project[data-project]').forEach(el => {
+      el.classList.toggle('day-hover-sync', !!(pdMap[el.dataset.project]?.[hovered]));
+    });
+  } else {
+    document.querySelectorAll('.sidebar-project[data-project]').forEach(el => {
+      el.classList.remove('day-hover-sync');
+    });
+  }
+}
+
+function setHoverDay(dateStr) {
+  state.hoverDay = dateStr || null;
+  applyHoverDaySync();
+}
+
+function clearHoverDay() {
+  state.hoverDay = null;
+  applyHoverDaySync();
 }
 
 // --- rendering ---
@@ -758,7 +796,8 @@ function renderSidebar() {
     const preview = s.isCowork
       ? `Scheduled run · ${s.counts?.messages || 0} turns`
       : `${sessionPreview} · ${s.counts?.messages || 0} turns`;
-    return `<div class="session-item${active}${s.isCowork ? ' cowork' : ''}" data-project="${escAttr(s.project || '')}" onclick="onSessionClick('${s.sessionId}')" onmouseenter="setHoverProject('${escAttr(s.project || '')}')" onmouseleave="clearHoverProject('${escAttr(s.project || '')}')">
+    const sessDay = s.lastTs ? laDateStr(new Date(s.lastTs)) : '';
+    return `<div class="session-item${active}${s.isCowork ? ' cowork' : ''}" data-project="${escAttr(s.project || '')}" data-day="${sessDay}" onclick="onSessionClick('${s.sessionId}')" onmouseenter="setHoverProject('${escAttr(s.project || '')}');setHoverDay('${sessDay}')" onmouseleave="clearHoverProject('${escAttr(s.project || '')}');clearHoverDay()">
       <div class="session-topline">
         <div class="project">${escHtml(proj || s.project || '')}</div>
         ${badge}
@@ -916,7 +955,7 @@ function renderWindowGauge() {
         const gap = isLast ? '' : 'margin-right:1px';
         const curCls = isCurrent ? ' wk-current' : '';
         const mmdd = wd.date.slice(5).replace('-', '/');
-        return `<div class="wk-slot${curCls}" style="opacity:${opacity};${gap}" title="${dayNames[i]} ${mmdd}: $${wd.usage.toFixed(2)} / $${dayAllotment.toFixed(2)} daily (${Math.round(pct)}%)">
+        return `<div class="wk-slot${curCls}" data-day="${wd.date}" onmouseenter="setHoverDay('${wd.date}')" onmouseleave="clearHoverDay()" style="opacity:${opacity};${gap}" title="${dayNames[i]} ${mmdd}: $${wd.usage.toFixed(2)} / $${dayAllotment.toFixed(2)} daily (${Math.round(pct)}%)">
           <div class="wk-bar-part" style="border-radius:${br}">
             <div class="wg-bar-fill ${fillCls}" style="width:${pct.toFixed(1)}%;height:100%;border-radius:${br}"></div>
           </div>
@@ -1128,7 +1167,7 @@ function renderOverview() {
   const feedBase = filteredHistory();
   const feedSorted = state.feedSort === 'expensive'
     ? [...feedBase].sort((a, b) => b.cost - a.cost)
-    : [...feedBase].reverse();
+    : [...feedBase].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   const feedHtml = renderFeedItems(filterBySearch(feedSorted).slice(0, 20));
 
   document.getElementById('tabContent').innerHTML = `
@@ -1400,6 +1439,7 @@ function renderFeedItems(items) {
   }
   return `<div class="feed">${items.map((h, idx) => {
     const d = new Date(h.timestamp);
+    const itemDay = laDateStr(d);
     const proj = (h.project || '').split('/').slice(-2).join('/');
     const itemId = (h.sessionId || '') + '_' + h.timestamp;
     const bkt = Math.floor(h.timestamp / WIN_MS);
@@ -1478,7 +1518,7 @@ function renderFeedItems(items) {
     const badge = h.isCowork ? renderKindBadge('Scheduled Task') : '';
     const sessionPreview = h.sessionId ? `${h.sessionId.slice(0, 8)}…` : '—';
 
-    return `<div class="feed-item${h.isCowork ? ' cowork' : ''}${costlyClass}" data-project="${escAttr(h.project || '')}" style="border-left:3px solid ${borderColor}" onclick="toggleFeedItem('${itemId}')" onmouseenter="setHoverProject('${escAttr(h.project || '')}')" onmouseleave="clearHoverProject('${escAttr(h.project || '')}')">
+    return `<div class="feed-item${h.isCowork ? ' cowork' : ''}${costlyClass}" data-project="${escAttr(h.project || '')}" data-day="${itemDay}" style="border-left:3px solid ${borderColor}" onclick="toggleFeedItem('${itemId}')" onmouseenter="setHoverProject('${escAttr(h.project || '')}');setHoverDay('${itemDay}')" onmouseleave="clearHoverProject('${escAttr(h.project || '')}');clearHoverDay()">
       <div class="feed-head">
         ${expandIcon}<div class="feed-copy">
           <div class="feed-title-row">
@@ -1503,7 +1543,7 @@ function renderFeedItems(items) {
 }
 
 function renderFeed() {
-  const items = filterBySearch(filteredHistory().reverse());
+  const items = filterBySearch([...filteredHistory()].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)));
   const searchVal = escHtml(state.feedSearch);
   const searchBox = `<div style="margin-bottom:12px"><input type="text" id="feedSearchInput" placeholder="Search commands..." value="${searchVal}" oninput="onFeedSearch(this.value)" style="width:100%;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;outline:none;font-family:inherit;" /></div>`;
   if (!items.length) {
