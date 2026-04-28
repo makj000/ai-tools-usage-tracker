@@ -260,7 +260,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.22.0</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.23.2</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -867,11 +867,15 @@ function renderWindowGauge() {
     : 'No active window';
 
   const bars = [];
+  let windowBarHtml = null;
+  let weeklyBarHtml = null;
+  let isWindowSegmented = false;
+  let isWeeklySegmented = false;
+  let todayIdx = -1;
 
-  // Segmented today-windows bar
+  // Build window bar HTML
   if (w.todayWindows && w.todayWindows.length && w.medianCeiling) {
-    const totalHours = w.todayWindows.reduce((s, ww) => s + ww.durationHours, 0);
-    const totalHours2 = w.todayWindows.reduce((s, ww) => s + ww.durationHours, 0);
+    isWindowSegmented = true;
     // Build full 24h spine: gaps + windows from midnight to midnight PT
     const { start: dayStart, end: dayEnd } = todayPTRange();
     const sorted = [...w.todayWindows].sort((a, b) => a.startEpoch - b.startEpoch);
@@ -897,11 +901,11 @@ function renderWindowGauge() {
 
       if (ww.isGap) {
         return `<div style="flex:${durationHours};${gap};border-radius:${brOuter}" title="${fmtEpochPT(ww.startEpoch)}–${fmtEpochPT(ww.endEpoch)}: idle">
-          <div class="win-bar-part" style="border-radius:${brBar};background:rgba(255,255,255,0.04)"></div>
-          <div class="win-time-row" style="opacity:0.35">
+          <div class="win-time-row" style="opacity:0.35;padding-top:0;padding-bottom:2px">
             <span class="win-t-start">${fmtEpochPT(ww.startEpoch)}</span>
             <span class="win-t-end">${fmtEpochPT(ww.endEpoch)}</span>
           </div>
+          <div class="win-bar-part" style="border-radius:${brBar};background:rgba(255,255,255,0.04)"></div>
         </div>`;
       }
 
@@ -913,37 +917,40 @@ function renderWindowGauge() {
       const curCls = winIsCurrent ? ' win-current' : '';
       const msgLabel = ww.messages ? ` · ${ww.messages} msgs` : '';
       return `<div class="win-slot${curCls}" style="flex:${durationHours};opacity:${opacity};${gap}" title="${fmtEpochPT(ww.startEpoch)}–${fmtEpochPT(ww.endEpoch)}: $${ww.usage.toFixed(2)}${msgLabel}">
+        <div class="win-time-row" style="padding-top:0;padding-bottom:2px">
+          <span class="win-t-start">${fmtEpochPT(ww.startEpoch)}</span>
+          <span class="win-t-end">${fmtEpochPT(ww.endEpoch)}</span>
+        </div>
         <div class="win-bar-part" style="border-radius:${brBar}">
           <div class="wg-bar-fill ${fillCls}" style="width:${pct.toFixed(1)}%;height:100%;border-radius:${brBar}"></div>
           ${pct > 0 ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:rgba(255,255,255,0.85);pointer-events:none">${Math.round(pct)}%</div>` : ''}
         </div>
-        <div class="win-time-row">
-          <span class="win-t-start">${fmtEpochPT(ww.startEpoch)}</span>
-          <span class="win-t-end">${fmtEpochPT(ww.endEpoch)}</span>
-        </div>
       </div>`;
     }).join('');
     const staleNote = windowStale ? ` <span style="color:var(--muted);font-size:10px">${windowStale}</span>` : '';
-    bars.push(`<div style="margin-bottom:6px">
+    windowBarHtml = `<div style="margin-bottom:2px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
-        <span style="font-size:12px;font-weight:600;color:var(--text)">Window</span>
+        <span style="font-size:12px;font-weight:600;color:var(--text)">Today's Windows</span>
         <span style="font-size:10px;color:var(--muted)">${w.totalHits} hits · est. $${w.medianCeiling.toFixed(2)} ceiling${staleNote}</span>
       </div>
       <div style="display:flex;width:100%">${segments}</div>
-    </div>`);
+    </div>`;
   } else {
-    bars.push(renderUsageBar(
+    windowBarHtml = renderUsageBar(
       'Window', windowLabel + ' · ' + w.totalHits + ' hits observed',
       windowUsage, w.medianCeiling, w.ceilings.length, windowStale
-    ));
+    );
   }
 
+  // Build weekly bar HTML
   if (w.weekly && w.weekly.ceiling) {
     const wk = w.weekly;
     const dayNames = ['Sat','Sun','Mon','Tue','Wed','Thu','Fri'];
     if (wk.weekDays && wk.weekDays.length === 7) {
+      isWeeklySegmented = true;
       const dayAllotment = w.daily?.ceiling || (wk.ceiling / 7);
       const todayStr = laDateStr(new Date());
+      todayIdx = wk.weekDays.findIndex(wd => wd.date === todayStr);
       const wkSegs = wk.weekDays.map((wd, i) => {
         const isFirst = i === 0, isLast = i === 6;
         const pct = Math.min(wd.usage / dayAllotment, 1) * 100;
@@ -962,17 +969,33 @@ function renderWindowGauge() {
           <div class="wk-day-label">${dayNames[i]}</div>
         </div>`;
       }).join('');
-      bars.push(`<div style="margin-bottom:6px">
+      const wkMb = '6';
+      weeklyBarHtml = `<div style="margin-bottom:${wkMb}px">
         <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
           <span style="font-size:12px;font-weight:600;color:var(--text)">Weekly</span>
           <span style="font-size:10px;color:var(--muted)">${wk.week} · est. $${wk.ceiling.toFixed(2)} ceiling (${wk.dataPoints} samples)${wk.pct !== null ? ` · <span style="font-weight:600;color:var(--text)">${Math.round(wk.pct*100)}%</span>` : ''}</span>
         </div>
         <div style="display:flex;width:100%">${wkSegs}</div>
-      </div>`);
+      </div>`;
     } else {
-      bars.push(renderUsageBar('Weekly', wk.week, wk.usage, wk.ceiling, wk.dataPoints, ''));
+      weeklyBarHtml = renderUsageBar('Weekly', wk.week, wk.usage, wk.ceiling, wk.dataPoints, '');
     }
   }
+
+  // Assemble: today's windows → zoom connector → weekly
+  if (windowBarHtml) bars.push(windowBarHtml);
+  if (isWindowSegmented && isWeeklySegmented && todayIdx >= 0) {
+    const lp = (todayIdx / 7 * 100).toFixed(2);
+    const rp = ((todayIdx + 1) / 7 * 100).toFixed(2);
+    bars.push(`<div style="position:relative;height:18px;color:var(--blue);margin-bottom:2px" aria-hidden="true">
+      <svg width="100%" height="18" viewBox="0 0 100 18" preserveAspectRatio="none" style="display:block">
+        <polygon points="0,0 100,0 ${rp},18 ${lp},18" fill="currentColor" opacity="0.06"/>
+        <line x1="0" y1="0" x2="${lp}" y2="18" stroke="currentColor" opacity="0.3" stroke-width="0.8"/>
+        <line x1="100" y1="0" x2="${rp}" y2="18" stroke="currentColor" opacity="0.3" stroke-width="0.8"/>
+      </svg>
+    </div>`);
+  }
+  if (weeklyBarHtml) bars.push(weeklyBarHtml);
 
   const capParts = [];
   if (w.daily && w.daily.ceiling) {
