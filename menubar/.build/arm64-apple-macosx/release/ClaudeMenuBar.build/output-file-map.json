@@ -1,0 +1,13 @@
+{
+  "": {
+    "dependencies": "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/ClaudeMenuBar.d",
+    "object": "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/ClaudeMenuBar.o",
+    "swift-dependencies": "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/primary.swiftdeps"
+  },
+  "/Users/kma/dev/tools-bots/claude-tracker/menubar/Sources/main.swift": {
+    "object": "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/main.swift.o",
+    "swiftmodule": "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/main.swiftdeps",
+    "diagnostics": "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/main.dia"
+  }
+}

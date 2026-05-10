@@ -1,0 +1,1861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="pragma" content="no-cache">
+<meta http-equiv="expires" content="0">
+<title>Claude Tracker</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #d97706;
+    --green: #3fb950;
+    --blue: #58a6ff;
+    --purple: #bc8cff;
+    --red: #f85149;
+    --cowork-bg: rgba(188,140,255,0.10);
+    --cowork-bg-strong: rgba(188,140,255,0.18);
+    --cowork-border: rgba(188,140,255,0.42);
+    --cowork-text: #eadcff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace; font-size: 14px; }
+
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 16px; font-weight: 600; color: var(--accent); }
+  header .subtitle { color: var(--muted); font-size: 12px; }
+  .header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .total-cost { font-size: 15px; font-weight: 700; color: var(--green); }
+
+  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font-size: 12px; }
+  .btn:hover { background: var(--border); }
+
+  .layout { display: grid; grid-template-columns: 280px 1fr; height: calc(100vh - 53px); }
+  .sidebar { background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; }
+  .main { overflow-y: auto; padding: 20px; }
+
+  .overview-top { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 1px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; align-content: start; }
+  .stat { background: var(--surface); padding: 14px; }
+  .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+  .stat .value { font-size: 20px; font-weight: 700; color: var(--text); }
+  .stat .value.green { color: var(--green); }
+  .stat .value.blue { color: var(--blue); }
+  .stat .value.purple { color: var(--purple); }
+  .stat .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .section-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 12px 16px 6px; }
+  .sidebar-tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 8px; }
+  .sidebar-tab { padding: 8px 10px; cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; border-top: none; border-left: none; border-right: none; transition: color 0.1s; }
+  .sidebar-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .sidebar-tab:hover { color: var(--text); }
+
+  /* Sidebar project list */
+  .sidebar-project { padding: 8px 16px; cursor: pointer; border-bottom: 1px solid var(--border); transition: background 0.1s; display: flex; flex-direction: column; gap: 3px; user-select: none; }
+  .sidebar-project .sp-row { display: flex; align-items: center; gap: 8px; }
+  .sidebar-project .sp-name-row { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+  .sidebar-project:hover { background: rgba(255,255,255,0.04); }
+  .sidebar-project.active { background: rgba(88,166,255,0.08); border-left: 2px solid var(--blue); padding-left: 14px; }
+  .sidebar-project.hover-sync { background: rgba(88,166,255,0.14); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.35); }
+  .sidebar-project.day-hover-sync { background: rgba(88,166,255,0.14); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.35); }
+  .sidebar-project .sp-name { font-size: 12px; color: var(--blue); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sidebar-project .sp-cost { font-size: 11px; font-weight: 600; color: var(--green); flex-shrink: 0; }
+  .sidebar-project .sp-bar { flex: 0 0 40px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .sidebar-project .sp-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+  .sidebar-project.cowork { background: linear-gradient(90deg, var(--cowork-bg-strong) 0, rgba(188,140,255,0.05) 56px, transparent 100%); box-shadow: inset 3px 0 0 var(--cowork-border); }
+  .sidebar-project.cowork:hover { background: linear-gradient(90deg, rgba(188,140,255,0.24) 0, rgba(188,140,255,0.08) 56px, transparent 100%); }
+  .sidebar-project.cowork .sp-name { color: var(--cowork-text); }
+  .sidebar-project.cowork .sp-bar-fill { background: linear-gradient(90deg, var(--purple), #d8b4fe); }
+
+  .session-item { padding: 10px 16px; cursor: pointer; border-bottom: 1px solid var(--border); transition: background 0.1s; }
+  .session-item:hover, .session-item.active { background: rgba(255,255,255,0.04); }
+  .session-item .session-topline { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .session-item .project { font-size: 11px; color: var(--blue); margin-bottom: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+  .session-item .preview { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .session-item .meta { font-size: 11px; color: var(--muted); margin-top: 3px; display: flex; justify-content: space-between; }
+  .session-item .cost-badge { color: var(--green); font-weight: 600; }
+  .session-item.cowork { background: linear-gradient(90deg, var(--cowork-bg-strong) 0, rgba(188,140,255,0.05) 56px, transparent 100%); box-shadow: inset 3px 0 0 var(--cowork-border); }
+  .session-item.cowork:hover, .session-item.cowork.active { background: linear-gradient(90deg, rgba(188,140,255,0.24) 0, rgba(188,140,255,0.08) 56px, transparent 100%); }
+  .session-item.hover-sync { background: rgba(88,166,255,0.10); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.28); }
+  .session-item.day-hover-sync { background: rgba(88,166,255,0.10); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.28); }
+  .session-item.cowork .project { color: var(--cowork-text); margin-bottom: 0; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .card h3 { font-size: 13px; margin-bottom: 12px; color: var(--accent); }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .row:last-child { border-bottom: none; }
+  .row .key { color: var(--muted); font-size: 12px; }
+  .row .val { font-weight: 600; }
+  .val.green { color: var(--green); }
+  .val.red { color: var(--red); }
+  .val.blue { color: var(--blue); }
+  .val.purple { color: var(--purple); }
+
+  .chart-wrap { margin-bottom: 16px; }
+  .chart-wrap h3 { font-size: 12px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .chart-outer { display: flex; gap: 6px; }
+  .y-axis { display: flex; flex-direction: column; justify-content: space-between; padding-bottom: 18px; min-width: 44px; text-align: right; }
+  .y-axis span { font-size: 9px; color: inherit; white-space: nowrap; }
+  .chart-inner { flex: 1; position: relative; }
+  .grid-lines { position: absolute; top: 0; left: 0; right: 0; bottom: 18px; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+  .grid-line { border-top: 1px dashed rgba(48,54,61,0.8); width: 100%; }
+  .chart { display: flex; align-items: flex-end; gap: 3px; height: 100px; }
+  .bar-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; flex: 1; cursor: pointer; }
+  .bar-col.active-bar { background: rgba(88,166,255,0.08); border-radius: 3px; }
+  .bar-col.active-bar .bar { opacity: 1; }
+  .bar-col.active-bar .bar-label { color: var(--blue); }
+  .bar-val { font-size: 8px; color: var(--muted); margin-bottom: 2px; white-space: nowrap; }
+  .bar { background: var(--accent); opacity: 0.75; width: 100%; border-radius: 2px 2px 0 0; min-height: 1px; transition: opacity 0.2s; }
+  .bar.green { background: var(--green); }
+  .bar-col:hover .bar { opacity: 1; }
+  .bar-label { font-size: 9px; color: var(--muted); margin-top: 3px; }
+
+  .feed { display: flex; flex-direction: column; gap: 8px; }
+  .feed-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; transition: border-color 0.12s, background 0.12s, box-shadow 0.12s; }
+  .feed-item.cowork { background: linear-gradient(90deg, var(--cowork-bg-strong) 0, rgba(188,140,255,0.08) 24px, rgba(188,140,255,0.06) 72px, rgba(188,140,255,0.04) 100%); border-color: var(--cowork-border); box-shadow: inset 0 0 0 1px rgba(188,140,255,0.14); }
+  .feed-item.cowork:hover { border-color: rgba(188,140,255,0.6); }
+  .feed-item.costly { border-color: rgba(217,119,6,0.32); box-shadow: inset 0 0 0 1px rgba(217,119,6,0.10); }
+  .feed-item.costly:hover { border-color: rgba(217,119,6,0.55); }
+  .feed-item .feed-head { display: flex; align-items: flex-start; gap: 12px; }
+  .feed-item .feed-copy { flex: 1; min-width: 0; }
+  .feed-item .feed-title-row { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+  .feed-item .prompt-text { font-size: 13px; line-height: 1.5; min-width: 0; word-wrap: break-word; flex: 1; }
+  .feed-item .feed-cost-summary { font-size: 11px; color: var(--muted); margin-top: 5px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .feed-item .cost-pill { flex-shrink: 0; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 10px; background: rgba(63,185,80,0.12); color: var(--green); white-space: nowrap; cursor: help; }
+  .feed-item .cost-pill.zero { background: rgba(139,148,158,0.12); color: var(--muted); }
+  .feed-item .cost-pill.mid  { background: rgba(88,166,255,0.12); color: var(--blue); }
+  .feed-item .cost-pill.high { background: rgba(217,119,6,0.15); color: var(--accent); }
+  .feed-item .cost-pill.na   { background: rgba(139,148,158,0.08); color: var(--muted); font-weight: 500; }
+  .feed-item .prompt-meta { font-size: 11px; color: var(--muted); margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .feed-item .project { color: var(--blue); }
+  .feed-item { cursor: pointer; }
+  .feed-item:hover { border-color: var(--muted); }
+  .feed-item.hover-sync { border-color: var(--blue); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.24); }
+  .kind-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap; }
+  .kind-badge.cowork { background: rgba(188,140,255,0.18); color: var(--cowork-text); border: 1px solid rgba(188,140,255,0.45); }
+  .kind-badge.costly { background: rgba(217,119,6,0.18); color: #ffd7a1; border: 1px solid rgba(217,119,6,0.4); }
+  .kind-badge.cost-reason { background: rgba(255,255,255,0.06); color: var(--accent); border: 1px solid rgba(217,119,6,0.18); }
+
+  /* Turn details table */
+  .turn-table { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 11px; }
+  .turn-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .turn-table td { padding: 4px 8px; border-bottom: 1px solid rgba(48,54,61,0.4); }
+  .turn-table tr:last-child td { border-bottom: none; }
+  .turn-table .turn-num { color: var(--muted); width: 30px; }
+  .turn-table .turn-time { color: var(--muted); }
+  .turn-table .turn-model { color: var(--purple); }
+  .turn-table .turn-cost { color: var(--green); font-weight: 600; text-align: right; }
+  .turn-table .turn-extra { color: var(--red); font-size: 9px; font-weight: 600; }
+  .turn-table .turn-tokens { color: var(--muted); text-align: right; }
+  .tag { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+  .tag.tool { background: rgba(88, 166, 255, 0.15); color: var(--blue); }
+  .tag.bash { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+  .tag.edit { background: rgba(188, 140, 255, 0.15); color: var(--purple); }
+
+  .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-bottom: 16px; }
+  .tool-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+  .tool-card .tool-name { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+  .tool-card .tool-count { font-size: 20px; font-weight: 700; color: var(--accent); }
+
+  .project-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); transition: background 0.3s; }
+  .project-row:last-child { border-bottom: none; }
+  .project-row.highlight { background: rgba(88,166,255,0.12); border-radius: 4px; }
+  .project-row.hover-sync { background: rgba(88,166,255,0.12); box-shadow: inset 0 0 0 1px rgba(88,166,255,0.28); border-radius: 4px; }
+  .project-row.cowork { background: linear-gradient(90deg, rgba(188,140,255,0.12) 0, rgba(188,140,255,0.04) 80px, transparent 100%); border-radius: 4px; }
+  .project-bar-bg { flex: 1; background: var(--border); border-radius: 2px; height: 6px; overflow: hidden; }
+  .project-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
+  .project-name { font-size: 12px; color: var(--blue); width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+  .project-cost { font-size: 12px; font-weight: 600; color: var(--green); width: 60px; text-align: right; flex-shrink: 0; }
+
+  .token-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .token-box { background: var(--bg); border-radius: 6px; padding: 10px 12px; }
+  .token-box .tval { font-size: 16px; font-weight: 700; }
+  .token-box .tlabel { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .token-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+  .token-chip { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+  .token-chip .tlabel { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+  .token-chip .tval { font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .breakdown-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .breakdown-title-wrap { min-width: 0; }
+  .breakdown-subtitle { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .view-switcher { display: inline-flex; gap: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 3px; flex-shrink: 0; }
+  .view-switcher button { padding: 4px 10px; border: none; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; background: transparent; color: var(--muted); }
+  .view-switcher button.active { background: var(--border); color: var(--text); }
+  .breakdown-note { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+
+  .no-data { color: var(--muted); font-size: 13px; padding: 40px; text-align: center; }
+
+  /* Window usage gauge */
+  .window-gauge { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  .overview-top .window-gauge { padding: 10px 12px; margin-bottom: 8px; }
+  .window-gauge .wg-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .overview-top .window-gauge .wg-header { margin-bottom: 4px; }
+  .window-gauge .wg-title { font-size: 13px; font-weight: 600; color: var(--accent); }
+  .overview-top .window-gauge .wg-title { font-size: 11px; }
+  .window-gauge .wg-meta { font-size: 11px; color: var(--muted); }
+  .overview-top .window-gauge .wg-meta { font-size: 9px; }
+  .window-gauge .wg-bar-bg { width: 100%; height: 10px; background: var(--border); border-radius: 5px; overflow: hidden; position: relative; }
+  .overview-top .window-gauge .wg-bar-bg { height: 7px; }
+  .window-gauge .wg-bar-fill { height: 100%; border-radius: 5px; transition: width 0.4s; }
+  .window-gauge .wg-bar-fill.low { background: var(--green); }
+  .window-gauge .wg-bar-fill.mid { background: var(--accent); }
+  .window-gauge .wg-bar-fill.high { background: var(--red); }
+  .window-gauge .wg-stats { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; }
+  .overview-top .window-gauge .wg-stats { margin-top: 3px; font-size: 9px; }
+  .window-gauge .wg-stats .wg-current { font-weight: 700; }
+  .window-gauge .wg-stats .wg-ceiling { color: var(--muted); }
+  .win-slot { display: flex; flex-direction: column; min-width: 0; cursor: default; }
+  .win-bar-part { height: 14px; background: var(--border); position: relative; overflow: hidden; }
+  .win-slot:hover .win-bar-part { filter: brightness(1.4); }
+  .win-slot.win-current .win-bar-part { outline: 1px solid var(--blue); outline-offset: 1px; }
+  .win-time-row { display: flex; justify-content: space-between; padding-top: 2px; font-size: 9px; }
+  .win-slot .win-t-start { color: var(--muted); }
+  .win-slot .win-t-end { visibility: hidden; color: var(--muted); }
+  .win-slot:hover .win-t-start { color: var(--text); font-weight: 700; }
+  .win-slot:hover .win-t-end { visibility: visible; color: var(--text); font-weight: 700; }
+  .win-slot.win-current .win-t-start { color: var(--blue); }
+  .wk-slot { display: flex; flex-direction: column; min-width: 0; cursor: default; flex: 1; }
+  .wk-bar-part { height: 10px; background: var(--border); position: relative; overflow: hidden; }
+  .wk-slot:hover .wk-bar-part { filter: brightness(1.4); }
+  .wk-slot.wk-current .wk-bar-part { outline: 1px solid var(--blue); outline-offset: 1px; }
+  .wk-day-label { font-size: 9px; color: var(--muted); text-align: center; padding-top: 2px; }
+  .wk-slot:hover .wk-day-label { color: var(--text); font-weight: 700; }
+  .wk-slot.wk-current .wk-day-label { color: var(--blue); }
+  .wk-slot.day-hover-sync .wk-bar-part { filter: brightness(1.5); outline: 1px solid var(--blue); outline-offset: 1px; }
+  .wk-slot.day-hover-sync .wk-day-label { color: var(--blue); font-weight: 700; }
+  .bar-col.day-hover-sync { background: rgba(88,166,255,0.10); border-radius: 3px; }
+  .bar-col.day-hover-sync .bar { opacity: 1; }
+  .bar-col.day-hover-sync .bar-label { color: var(--blue); font-weight: 700; }
+  .feed-item.day-hover-sync { border-color: var(--blue) !important; box-shadow: inset 0 0 0 1px rgba(88,166,255,0.28) !important; }
+
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .tab { padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; transition: color 0.1s; }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab:hover { color: var(--text); }
+
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .banner { background: rgba(217,119,6,0.12); border: 1px solid rgba(217,119,6,0.4); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 10px; }
+  .banner code { background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; font-family: ui-monospace, Menlo, monospace; color: var(--accent); }
+  .banner .banner-btn { margin-left: auto; padding: 4px 10px; font-size: 11px; border-radius: 4px; border: 1px solid var(--accent); background: var(--accent); color: #000; cursor: pointer; font-weight: 600; }
+
+  /* Filter bar */
+  .filter-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 12px; background: rgba(88,166,255,0.06); border: 1px solid rgba(88,166,255,0.2); border-radius: 6px; font-size: 12px; }
+  .filter-bar .filter-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .filter-tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; background: rgba(88,166,255,0.12); border-radius: 4px; color: var(--blue); font-size: 12px; font-weight: 600; }
+  .filter-tag .remove { cursor: pointer; opacity: 0.6; font-size: 14px; line-height: 1; }
+  .filter-tag .remove:hover { opacity: 1; }
+  .filter-reset { margin-left: auto; padding: 4px 10px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+  .filter-reset:hover { background: var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Claude Tracker</h1>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.23.2</span>
+  <span class="subtitle">Commands &amp; Token Usage</span>
+  <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
+  <div class="header-actions">
+    <span id="totalCostHeader" class="total-cost"></span>
+    <span style="font-size:10px;color:var(--muted)">equiv. API cost</span>
+  </div>
+</header>
+
+<div class="layout">
+  <div class="sidebar" id="sidebar">
+    <div id="projectHeader" class="section-title"></div>
+    <div id="projectList"></div>
+    <div id="sessionHeader" class="section-title"></div>
+    <div id="sessionList"><div class="no-data">Loading...</div></div>
+  </div>
+  <div class="main">
+    <div id="cleanupBanner"></div>
+    <div id="filterBar"></div>
+    <div class="tabs">
+      <div class="tab" onclick="showTab('overview')">Overview</div>
+      <div class="tab" onclick="showTab('cost')">Cost &amp; Tokens</div>
+      <div class="tab" onclick="showTab('tools')">Tool Usage</div>
+    </div>
+    <div id="tabContent"></div>
+  </div>
+</div>
+
+<script>
+  // Cache-bust data.js so periodic page refreshes always see the freshest build.
+  // The hook-triggered build atomically rewrites data.js after each Claude tool use.
+  document.write('<scr' + 'ipt src="data/data.js?t=' + Date.now() + '"></scr' + 'ipt>');
+</script>
+<script>
+let state = {
+  stats: null,
+  tokens: null,
+  history: [],
+  events: [],
+  activeTab: localStorage.getItem('claude-tracker-tab') || 'overview',
+  filterProject: localStorage.getItem('claude-tracker-filterProject') || null,
+  filterDay: localStorage.getItem('claude-tracker-filterDay') || null,
+  filterSession: localStorage.getItem('claude-tracker-filterSession') || null,
+  feedSearch: '',
+  feedSort: 'recent',
+  toolAnnotated: [],
+  toolRenderedCount: 0,
+  sidebarProjectSort: 'top',
+  sidebarSessionSort: 'top',
+  costBreakdown: localStorage.getItem('claude-tracker-costBreakdown') || 'project',
+  hoverProject: null,
+  hoverDay: null,
+};
+
+// --- helpers for computing per-project per-day data ---
+// Build a map: project -> day -> { prompts, cost, lastTs }
+// from history entries (which have per-prompt cost from enrichHistory).
+function buildProjectDayMap() {
+  const map = {};
+  for (const h of state.history) {
+    const proj = h.project || '';
+    const day = h.timestamp ? new Date(h.timestamp).toISOString().slice(0, 10) : null;
+    if (!day) continue;
+    if (!map[proj]) map[proj] = {};
+    if (!map[proj][day]) map[proj][day] = { prompts: 0, cost: 0, isCowork: !!h.isCowork, lastTs: h.timestamp || 0 };
+    map[proj][day].prompts++;
+    map[proj][day].cost += (typeof h.cost === 'number' ? h.cost : 0);
+    if (h.isCowork) map[proj][day].isCowork = true;
+    if (h.timestamp) map[proj][day].lastTs = Math.max(map[proj][day].lastTs || 0, h.timestamp);
+  }
+  return map;
+}
+
+// Return history entries matching current filters
+function filteredHistory() {
+  return state.history.filter(h => {
+    if (state.filterProject && h.project !== state.filterProject) return false;
+    if (state.filterSession && h.sessionId !== state.filterSession) return false;
+    if (state.filterDay) {
+      const d = h.timestamp ? new Date(h.timestamp).toISOString().slice(0, 10) : null;
+      if (d !== state.filterDay) return false;
+    }
+    return true;
+  });
+}
+
+// Return sessions matching current filters
+function filteredSessions() {
+  const sessions = state.tokens?.sessions || [];
+  return sessions.filter(s => {
+    if (state.filterProject && s.project !== state.filterProject) return false;
+    if (state.filterSession && s.sessionId !== state.filterSession) return false;
+    if (state.filterDay) {
+      // session spans days; include if its range overlaps the filter day
+      const first = s.firstTs ? s.firstTs.slice(0, 10) : '';
+      const last = s.lastTs ? s.lastTs.slice(0, 10) : '';
+      if (state.filterDay < first || state.filterDay > last) return false;
+    }
+    return true;
+  });
+}
+
+function eventProjectOf(e) {
+  return e.project || e.cwd || '';
+}
+
+function eventSessionOf(e) {
+  return e.sessionId || e.session_id || '';
+}
+
+function filteredEvents() {
+  return state.events.filter(e => {
+    const project = eventProjectOf(e);
+    const sessionId = eventSessionOf(e);
+    if (state.filterProject && project !== state.filterProject) return false;
+    if (state.filterSession && sessionId !== state.filterSession) return false;
+    if (state.filterDay) {
+      const d = e.timestamp ? new Date(e.timestamp).toISOString().slice(0, 10) : null;
+      if (d !== state.filterDay) return false;
+    }
+    return true;
+  });
+}
+
+function hasFilters() { return state.filterProject || state.filterDay || state.filterSession; }
+
+function setFilter(opts) {
+  if ('project' in opts) state.filterProject = opts.project;
+  if ('day' in opts) state.filterDay = opts.day;
+  if ('session' in opts) state.filterSession = opts.session;
+  persistFilters();
+  renderFilterBar();
+  renderSidebar();
+  renderTab(state.activeTab);
+}
+
+function clearFilters() {
+  state.filterProject = null;
+  state.filterDay = null;
+  state.filterSession = null;
+  persistFilters();
+  renderFilterBar();
+  renderSidebar();
+  renderTab(state.activeTab);
+}
+
+function persistFilters() {
+  if (state.filterProject) localStorage.setItem('claude-tracker-filterProject', state.filterProject);
+  else localStorage.removeItem('claude-tracker-filterProject');
+  if (state.filterDay) localStorage.setItem('claude-tracker-filterDay', state.filterDay);
+  else localStorage.removeItem('claude-tracker-filterDay');
+  if (state.filterSession) localStorage.setItem('claude-tracker-filterSession', state.filterSession);
+  else localStorage.removeItem('claude-tracker-filterSession');
+}
+
+function clearFilterSession() { setFilter({ session: null }); }
+
+function clearFilterProject() { setFilter({ project: null }); }
+function clearFilterDay() { setFilter({ day: null }); }
+
+function onSessionClick(sessionId) {
+  if (state.filterSession === sessionId) {
+    setFilter({ session: null });
+  } else {
+    setFilter({ session: sessionId });
+  }
+}
+
+// LA date string helper (YYYY-MM-DD) for a given Date object
+function laDateStr(d) {
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+}
+
+// --- dual-bar chart builder (activity + cost up, extra credit down) ---
+function buildDualChart(labels, aValues, bValues, cValues, fmtA, fmtB, fmtC) {
+  const CHART_H = 100;
+  const EXTRA_H = 40;
+  const LABEL_H = 16; // bar-label height
+  const maxA = Math.max(...aValues, 0.0001);
+  const maxB = Math.max(...bValues, 0.0001);
+  const maxC = Math.max(...cValues, 0.0001);
+  const hasExtra = cValues.some(v => v > 0);
+
+  const bars = labels.map((lbl, i) => {
+    const a = aValues[i] || 0;
+    const b = bValues[i] || 0;
+    const c = cValues[i] || 0;
+    const hA = Math.max(a > 0 ? 2 : 0, Math.round((a / maxA) * CHART_H));
+    const hB = Math.max(b > 0 ? 2 : 0, Math.round((b / maxB) * CHART_H));
+    const hC = hasExtra ? Math.max(c > 0 ? 2 : 0, Math.round((c / maxC) * EXTRA_H)) : 0;
+    const dateLabel = lbl.length === 10 ? lbl.slice(5).replace('-', '/') : lbl;
+    const activeClass = state.filterDay === lbl ? 'active-bar' : '';
+    const tip = `${lbl}: ${fmtA(a)} prompts · ${fmtB(b)}${c > 0 ? ' · ' + fmtC(c) + ' extra' : ''}`;
+    return `<div class="bar-col ${activeClass}" data-day="${lbl}" onmouseenter="setHoverDay('${lbl}')" onmouseleave="clearHoverDay()" style="justify-content:flex-start" title="${tip}" onclick="onBarClick('${lbl}')">
+      <div style="display:flex;align-items:flex-end;gap:1px;width:100%;height:${CHART_H}px">
+        <div class="bar" style="height:${hA}px;flex:1"></div>
+        <div class="bar green" style="height:${hB}px;flex:1"></div>
+      </div>
+      <div class="bar-label">${dateLabel}</div>
+      ${hasExtra ? `<div style="display:flex;align-items:flex-start;width:100%;height:${EXTRA_H}px;padding-top:1px">
+        <div style="height:${hC}px;width:100%;background:var(--red);opacity:0.75;border-radius:0 0 2px 2px"></div>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+
+  const totalH = CHART_H + LABEL_H + (hasExtra ? EXTRA_H : 0);
+  const yAxisA = `<div style="display:flex;flex-direction:column;min-width:44px;text-align:right;font-size:9px">
+    <div style="height:${CHART_H}px;display:flex;flex-direction:column;justify-content:space-between;color:var(--accent)">
+      <span>${fmtA(maxA)}</span><span>${fmtA(Math.round(maxA/2))}</span><span>0</span>
+    </div>
+    <div style="height:${LABEL_H}px"></div>
+    ${hasExtra ? `<div style="height:${EXTRA_H}px;display:flex;flex-direction:column;justify-content:flex-end;color:var(--red)">
+      <span>${fmtC(maxC)}</span>
+    </div>` : ''}
+  </div>`;
+  const yAxisB = `<div style="display:flex;flex-direction:column;min-width:44px;text-align:left;font-size:9px;color:var(--green)">
+    <div style="height:${CHART_H}px;display:flex;flex-direction:column;justify-content:space-between">
+      <span>${fmtB(maxB)}</span><span>${fmtB(maxB/2)}</span><span>0</span>
+    </div>
+  </div>`;
+
+  const chartH = hasExtra ? `${CHART_H + LABEL_H + EXTRA_H}px` : `${CHART_H}px`;
+  return `<div class="chart-outer">
+    ${yAxisA}
+    <div class="chart-inner" style="height:${chartH}">
+      <div class="grid-lines" style="bottom:${hasExtra ? LABEL_H + EXTRA_H : 0}px"><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div></div>
+      <div class="chart" style="gap:4px;height:${chartH};align-items:flex-start">${bars}</div>
+    </div>
+    ${yAxisB}
+  </div>`;
+}
+
+function onBarClick(day) {
+  // Toggle: clicking same bar again clears filter
+  if (state.filterDay === day) {
+    setFilter({ day: null });
+  } else {
+    setFilter({ day: day });
+  }
+}
+
+// --- project click handlers ---
+let dblClickTimer = null;
+function onProjectClick(projectPath) {
+  if (dblClickTimer) {
+    // Double-click detected
+    clearTimeout(dblClickTimer);
+    dblClickTimer = null;
+    onProjectDblClick(projectPath);
+    return;
+  }
+  dblClickTimer = setTimeout(() => {
+    dblClickTimer = null;
+    // Single click: toggle project filter
+    if (state.filterProject === projectPath) {
+      setFilter({ project: null });
+    } else {
+      setFilter({ project: projectPath });
+    }
+  }, 250);
+}
+
+function onProjectDblClick(projectPath) {
+  // Set filter and switch to Token Usage tab, highlight project
+  state.filterProject = projectPath;
+  showTab('cost');
+  // After render, find and highlight the matching project row
+  setTimeout(() => {
+    const rows = document.querySelectorAll('.project-row[data-project]');
+    for (const row of rows) {
+      if (row.dataset.project === projectPath) {
+        row.classList.add('highlight');
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => row.classList.remove('highlight'), 5000);
+        break;
+      }
+    }
+  }, 50);
+}
+
+function setHoverProject(projectPath) {
+  state.hoverProject = projectPath || null;
+  applyHoverProjectSync();
+}
+
+function clearHoverProject(projectPath) {
+  if (projectPath && state.hoverProject !== projectPath) return;
+  state.hoverProject = null;
+  applyHoverProjectSync();
+}
+
+function applyHoverProjectSync() {
+  const hovered = state.hoverProject;
+  document.querySelectorAll('[data-project]').forEach(el => {
+    el.classList.toggle('hover-sync', !!hovered && el.dataset.project === hovered);
+  });
+  applyHoverDaySync();
+}
+
+function applyHoverDaySync() {
+  const hovered = state.hoverDay;
+  document.querySelectorAll('[data-day]').forEach(el => {
+    el.classList.toggle('day-hover-sync', !!hovered && el.dataset.day === hovered);
+  });
+  // Sidebar project rows: highlight any project that had activity on hovered day
+  if (hovered && state.tokens) {
+    const pdMap = buildProjectDayMap();
+    document.querySelectorAll('.sidebar-project[data-project]').forEach(el => {
+      el.classList.toggle('day-hover-sync', !!(pdMap[el.dataset.project]?.[hovered]));
+    });
+  } else {
+    document.querySelectorAll('.sidebar-project[data-project]').forEach(el => {
+      el.classList.remove('day-hover-sync');
+    });
+  }
+}
+
+function setHoverDay(dateStr) {
+  state.hoverDay = dateStr || null;
+  applyHoverDaySync();
+}
+
+function clearHoverDay() {
+  state.hoverDay = null;
+  applyHoverDaySync();
+}
+
+// --- rendering ---
+function loadAll() {
+  const d = window.TRACKER_DATA;
+  if (!d) {
+    document.getElementById('tabContent').innerHTML = '<div class="no-data">No data.js found.<br><br>Run <code>node claude/scripts/build.js</code> in the project directory, then reload this page.</div>';
+    return;
+  }
+  state.stats = d.stats;
+  state.tokens = d.tokens;
+  state.history = d.history;
+  state.events = d.events;
+
+  const thisMonth2 = new Date().toISOString().slice(0, 7);
+  const monthCostHeader = Object.entries(d.tokens?.perDay || {})
+    .filter(([day]) => day.startsWith(thisMonth2))
+    .reduce((sum, [, v]) => sum + v.cost, 0);
+  document.getElementById('totalCostHeader').textContent = `$${monthCostHeader.toFixed(2)} this month`;
+
+  if (d.generatedAt) {
+    const gen = new Date(d.generatedAt);
+    const ts = gen.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const el = document.getElementById('freshness');
+    if (el) el.textContent = `data: ${ts}`;
+  }
+
+  renderCleanupBanner(d.maintenance);
+  renderFilterBar();
+  renderSidebar();
+  showTab(state.activeTab);
+}
+
+function refresh() {
+  alert('To refresh data, run:\n\n  node scripts/build.js\n\nthen reload this page.\n\n(Tip: this happens automatically after every Claude Code tool use, via the log_hook.)');
+}
+
+function renderCleanupBanner(m) {
+  const el = document.getElementById('cleanupBanner');
+  if (!el) return;
+  if (!m || !m.oldFiles || !m.oldFiles.length) { el.innerHTML = ''; return; }
+  const n = m.oldFiles.length;
+  el.innerHTML = `
+    <div class="banner">
+      <span>You have <strong>${n}</strong> rotated event file${n > 1 ? 's' : ''} older than 6 months. Run the cleanup command to delete ${n > 1 ? 'them' : 'it'}.</span>
+      <button class="banner-btn" onclick="showCleanupCommand()">Show command</button>
+    </div>`;
+}
+
+function showCleanupCommand() {
+  const m = window.TRACKER_DATA?.maintenance;
+  const list = m?.oldFiles?.join('\n  ') || '';
+  const msg = `To delete event files older than 6 months, run:\n\n  node scripts/build.js --cleanup\n\nFiles that will be removed:\n  ${list}`;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText('node scripts/build.js --cleanup').catch(() => {});
+  }
+  alert(msg);
+}
+
+function renderFilterBar() {
+  const el = document.getElementById('filterBar');
+  if (!hasFilters()) { el.innerHTML = ''; return; }
+
+  let tags = '';
+  if (state.filterProject) {
+    const name = state.filterProject.split('/').slice(-2).join('/') || state.filterProject;
+    tags += `<span class="filter-tag">Project: ${escHtml(name)} <span class="remove" onclick="clearFilterProject()">&times;</span></span>`;
+  }
+  if (state.filterSession) {
+    tags += `<span class="filter-tag">Session: ${state.filterSession.slice(0, 8)}… <span class="remove" onclick="clearFilterSession()">&times;</span></span>`;
+  }
+  if (state.filterDay) {
+    tags += `<span class="filter-tag">Day: ${state.filterDay} <span class="remove" onclick="clearFilterDay()">&times;</span></span>`;
+  }
+
+  el.innerHTML = `<div class="filter-bar">
+    <span class="filter-label">Filtered by</span>
+    ${tags}
+    <button class="filter-reset" onclick="clearFilters()">Reset all</button>
+  </div>`;
+}
+
+function showTab(name) {
+  if (state.toolObserver) { state.toolObserver.disconnect(); state.toolObserver = null; }
+  state.activeTab = name;
+  localStorage.setItem('claude-tracker-tab', name);
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    const tabs = ['overview', 'cost', 'tools'];
+    t.classList.toggle('active', tabs[i] === name);
+  });
+  renderTab(name);
+}
+
+function renderTab(name) {
+  if (name === 'overview') renderOverview();
+  else if (name === 'cost') renderCost();
+  else if (name === 'feed') renderFeed();
+  else if (name === 'tools') renderTools();
+  applyHoverProjectSync();
+}
+
+function sidebarTab(label, current, value, setter) {
+  const active = current === value ? ' active' : '';
+  return `<button class="sidebar-tab${active}" onclick="${setter}('${value}')">${label}</button>`;
+}
+
+function renderSidebar() {
+  // --- Projects ---
+  const projEl = document.getElementById('projectList');
+  const projHdrEl = document.getElementById('projectHeader');
+
+  // Derive last-active timestamp per project from sessions
+  const projLastTs = {};
+  for (const s of (state.tokens?.sessions || [])) {
+    if (!s.project || !s.lastTs) continue;
+    const ts = new Date(s.lastTs).getTime();
+    if (!projLastTs[s.project] || ts > projLastTs[s.project]) projLastTs[s.project] = ts;
+  }
+
+  let projectsForSidebar;
+  if (state.filterDay) {
+    const pdMap = buildProjectDayMap();
+    projectsForSidebar = Object.entries(pdMap)
+      .map(([project, days]) => ({
+        project,
+        cost: days[state.filterDay]?.cost || 0,
+        prompts: days[state.filterDay]?.prompts || 0,
+        isCowork: !!days[state.filterDay]?.isCowork,
+        lastTs: days[state.filterDay]?.lastTs || 0,
+      }))
+      .filter(p => p.cost > 0 || p.prompts > 0)
+      .sort((a, b) => state.sidebarProjectSort === 'recent'
+        ? (b.lastTs || 0) - (a.lastTs || 0)
+        : b.cost - a.cost)
+      .slice(0, 10);
+  } else {
+    const allProjects = state.tokens?.projects || [];
+    if (state.sidebarProjectSort === 'recent') {
+      projectsForSidebar = [...allProjects]
+        .sort((a, b) => (projLastTs[b.project] || 0) - (projLastTs[a.project] || 0))
+        .slice(0, 10);
+    } else {
+      projectsForSidebar = allProjects.slice(0, 10);
+    }
+  }
+
+  if (projHdrEl) {
+    projHdrEl.className = 'sidebar-tabs';
+    projHdrEl.innerHTML =
+      sidebarTab('Top Projects', state.sidebarProjectSort, 'top', 'setSidebarProjectSort') +
+      sidebarTab('Recent', state.sidebarProjectSort, 'recent', 'setSidebarProjectSort');
+  }
+
+  if (!projectsForSidebar.length) {
+    projEl.innerHTML = '<div class="no-data" style="padding:12px 16px">No projects</div>';
+  } else {
+    const maxCost = Math.max(0.0001, Math.max(...projectsForSidebar.map(p => p.cost)));
+    projEl.innerHTML = projectsForSidebar.map(p => {
+      const name = p.project.split('/').slice(-2).join('/') || p.project;
+      const pct = Math.round((p.cost / maxCost) * 100);
+      const active = state.filterProject === p.project ? 'active' : '';
+      const klass = `sidebar-project ${active}${p.isCowork ? ' cowork' : ''}`.trim();
+      const badge = p.isCowork ? renderKindBadge('Scheduled') : '';
+      const lastActive = projLastTs[p.project] ? formatSessionDate(new Date(projLastTs[p.project])) : '';
+      const tokLine = p.counts ? `<div style="font-size:10px;color:var(--muted)">${fmtNum(p.counts.input_tokens)} in · ${fmtNum(p.counts.output_tokens)} out${lastActive ? ' · ' + lastActive : ''}</div>` : '';
+      return `<div class="${klass}" data-project="${escAttr(p.project)}" onclick="onProjectClick('${escAttr(p.project)}')" onmouseenter="setHoverProject('${escAttr(p.project)}')" onmouseleave="clearHoverProject('${escAttr(p.project)}')" title="Double-click to jump to Token Usage">
+        <div class="sp-row">
+          <div class="sp-name-row">
+            <div class="sp-name" title="${escHtml(p.project)}">${escHtml(name)}</div>
+            ${badge}
+          </div>
+          <div class="sp-bar"><div class="sp-bar-fill" style="width:${pct}%"></div></div>
+          <div class="sp-cost">$${p.cost.toFixed(2)}</div>
+        </div>
+        ${tokLine}
+      </div>`;
+    }).join('');
+  }
+
+  // --- Sessions ---
+  const sessEl = document.getElementById('sessionList');
+  const sessHdrEl = document.getElementById('sessionHeader');
+  const allSessions = filteredSessions();
+  const sessions = [...allSessions]
+    .sort((a, b) => state.sidebarSessionSort === 'recent'
+      ? new Date(b.lastTs || 0) - new Date(a.lastTs || 0)
+      : (b.cost || 0) - (a.cost || 0))
+    .slice(0, 60);
+
+  if (sessHdrEl) {
+    sessHdrEl.className = 'sidebar-tabs';
+    sessHdrEl.innerHTML =
+      sidebarTab('Top Sessions', state.sidebarSessionSort, 'top', 'setSidebarSessionSort') +
+      sidebarTab('Recent', state.sidebarSessionSort, 'recent', 'setSidebarSessionSort');
+  }
+
+  if (!sessions.length) {
+    sessEl.innerHTML = '<div class="no-data">No sessions</div>';
+    applyHoverProjectSync();
+    return;
+  }
+  sessEl.innerHTML = sessions.map(s => {
+    const when = s.lastTs ? formatSessionDate(new Date(s.lastTs)) : '—';
+    const proj = (s.project || '').split('/').slice(-2).join('/');
+    const cost = s.cost || 0;
+    const active = state.filterSession === s.sessionId ? ' active' : '';
+    const badge = s.isCowork ? renderKindBadge('Scheduled') : '';
+    const sessionPreview = s.sessionId ? `${s.sessionId.slice(0, 8)}…` : '—';
+    const preview = s.isCowork
+      ? `Scheduled run · ${s.counts?.messages || 0} turns`
+      : `${sessionPreview} · ${s.counts?.messages || 0} turns`;
+    const sessDay = s.lastTs ? laDateStr(new Date(s.lastTs)) : '';
+    return `<div class="session-item${active}${s.isCowork ? ' cowork' : ''}" data-project="${escAttr(s.project || '')}" data-day="${sessDay}" onclick="onSessionClick('${s.sessionId}')" onmouseenter="setHoverProject('${escAttr(s.project || '')}');setHoverDay('${sessDay}')" onmouseleave="clearHoverProject('${escAttr(s.project || '')}');clearHoverDay()">
+      <div class="session-topline">
+        <div class="project">${escHtml(proj || s.project || '')}</div>
+        ${badge}
+      </div>
+      <div class="preview">${escHtml(preview)}</div>
+      <div class="meta"><span class="cost-badge">$${cost.toFixed(4)}</span><span style="color:var(--muted)">${fmtNum(s.counts?.input_tokens||0)} in · ${fmtNum(s.counts?.output_tokens||0)} out</span><span>${when}</span></div>
+    </div>`;
+  }).join('');
+  applyHoverProjectSync();
+}
+
+function fmtHour(h) {
+  const suffix = h >= 12 ? 'pm' : 'am';
+  const hr = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return hr + suffix;
+}
+
+function fmtEpochPT(ms) {
+  return new Date(ms).toLocaleTimeString('en-US', {
+    timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', hour12: true,
+  }).replace(':00', '').replace(' ', '').toLowerCase();
+}
+
+function todayPTRange() {
+  const now = new Date();
+  const utcH = now.getUTCHours();
+  const ptH = parseInt(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }));
+  const offset = ((utcH - ptH) % 24 + 24) % 24;
+  const ds = now.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const [mo, da, yr] = ds.split('/').map(Number);
+  const start = Date.UTC(yr, mo - 1, da, offset);
+  return { start, end: start + 24 * 3600 * 1000 };
+}
+
+function renderUsageBar(label, meta, usage, ceiling, dataPoints, staleNote) {
+  if (ceiling === null || ceiling === undefined) return '';
+  const pct = Math.round(Math.min(usage / ceiling, 1.5) * 100);
+  const barPct = Math.min(pct, 100);
+  const cls = pct < 50 ? 'low' : pct < 85 ? 'mid' : 'high';
+  const colorVar = cls === 'low' ? 'green' : cls === 'mid' ? 'accent' : 'red';
+  const stale = staleNote ? ` <span style="color:var(--muted);font-size:10px">${staleNote}</span>` : '';
+  return `<div style="margin-bottom:6px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+      <span style="font-size:12px;font-weight:600;color:var(--text)">${label}</span>
+      <span style="font-size:10px;color:var(--muted)">${meta}</span>
+    </div>
+    <div class="wg-bar-bg"><div class="wg-bar-fill ${cls}" style="width:${barPct}%"></div></div>
+    <div style="display:flex;justify-content:space-between;margin-top:2px;font-size:10px">
+      <span style="color:var(--${colorVar});font-weight:600">$${usage.toFixed(2)} (${pct}%)${stale}</span>
+      <span style="color:var(--muted)">est. limit: $${ceiling.toFixed(2)} (${dataPoints} samples)</span>
+    </div>
+  </div>`;
+}
+
+function renderWindowGauge() {
+  const w = window.TRACKER_DATA?.windowUsage;
+  if (!w || w.medianCeiling === null) return '';
+
+  // Identify the current rolling window client-side from epoch timestamps,
+  // so the highlight is always correct even if data.js is slightly stale.
+  const nowMs = Date.now();
+  const liveWin = w.todayWindows?.find(ww => ww.startEpoch <= nowMs && nowMs < ww.endEpoch) || null;
+  const windowUsage = liveWin ? w.currentUsage : 0;
+  const windowStale = (!liveWin && w.windowEndEpoch && nowMs >= w.windowEndEpoch) ? '(stale — rebuild needed)' : '';
+  const windowLabel = liveWin
+    ? `${fmtEpochPT(liveWin.startEpoch)} – ${fmtEpochPT(liveWin.endEpoch)} PT`
+    : 'No active window';
+
+  const bars = [];
+  let windowBarHtml = null;
+  let weeklyBarHtml = null;
+  let isWindowSegmented = false;
+  let isWeeklySegmented = false;
+  let todayIdx = -1;
+
+  // Build window bar HTML
+  if (w.todayWindows && w.todayWindows.length && w.medianCeiling) {
+    isWindowSegmented = true;
+    // Build full 24h spine: gaps + windows from midnight to midnight PT
+    const { start: dayStart, end: dayEnd } = todayPTRange();
+    const sorted = [...w.todayWindows].sort((a, b) => a.startEpoch - b.startEpoch);
+    const spine = [];
+    let cursor = dayStart;
+    for (const ww of sorted) {
+      const s = Math.max(ww.startEpoch, dayStart);
+      const e = Math.min(ww.endEpoch, dayEnd);
+      if (e <= s) continue;
+      if (s > cursor) spine.push({ isGap: true, startEpoch: cursor, endEpoch: s });
+      spine.push({ ...ww, startEpoch: s, endEpoch: e, isGap: false });
+      cursor = e;
+    }
+    if (cursor < dayEnd) spine.push({ isGap: true, startEpoch: cursor, endEpoch: dayEnd });
+
+    const segments = spine.map((ww, i) => {
+      const isFirst = i === 0;
+      const isLast = i === spine.length - 1;
+      const durationHours = (ww.endEpoch - ww.startEpoch) / 3600000;
+      const brOuter = isFirst ? '4px' : isLast ? '4px' : '0';
+      const brBar = isFirst ? '4px 0 0 4px' : isLast ? '0 4px 4px 0' : '0';
+      const gap = isLast ? '' : 'margin-right:1px';
+
+      if (ww.isGap) {
+        return `<div style="flex:${durationHours};${gap};border-radius:${brOuter}" title="${fmtEpochPT(ww.startEpoch)}–${fmtEpochPT(ww.endEpoch)}: idle">
+          <div class="win-time-row" style="opacity:0.35;padding-top:0;padding-bottom:2px">
+            <span class="win-t-start">${fmtEpochPT(ww.startEpoch)}</span>
+            <span class="win-t-end">${fmtEpochPT(ww.endEpoch)}</span>
+          </div>
+          <div class="win-bar-part" style="border-radius:${brBar};background:rgba(255,255,255,0.04)"></div>
+        </div>`;
+      }
+
+      const pct = Math.min(ww.usage / w.medianCeiling, 1) * 100;
+      const fillCls = pct < 50 ? 'low' : pct < 85 ? 'mid' : 'high';
+      const winIsCurrent = ww.startEpoch <= nowMs && nowMs < ww.endEpoch;
+      const winIsPast = ww.endEpoch <= nowMs;
+      const opacity = winIsPast ? 0.4 : 1;
+      const curCls = winIsCurrent ? ' win-current' : '';
+      const msgLabel = ww.messages ? ` · ${ww.messages} msgs` : '';
+      return `<div class="win-slot${curCls}" style="flex:${durationHours};opacity:${opacity};${gap}" title="${fmtEpochPT(ww.startEpoch)}–${fmtEpochPT(ww.endEpoch)}: $${ww.usage.toFixed(2)}${msgLabel}">
+        <div class="win-time-row" style="padding-top:0;padding-bottom:2px">
+          <span class="win-t-start">${fmtEpochPT(ww.startEpoch)}</span>
+          <span class="win-t-end">${fmtEpochPT(ww.endEpoch)}</span>
+        </div>
+        <div class="win-bar-part" style="border-radius:${brBar}">
+          <div class="wg-bar-fill ${fillCls}" style="width:${pct.toFixed(1)}%;height:100%;border-radius:${brBar}"></div>
+          ${pct > 0 ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:rgba(255,255,255,0.85);pointer-events:none">${Math.round(pct)}%</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    const staleNote = windowStale ? ` <span style="color:var(--muted);font-size:10px">${windowStale}</span>` : '';
+    windowBarHtml = `<div style="margin-bottom:2px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+        <span style="font-size:12px;font-weight:600;color:var(--text)">Today's Windows</span>
+        <span style="font-size:10px;color:var(--muted)">${w.totalHits} hits · est. $${w.medianCeiling.toFixed(2)} ceiling${staleNote}</span>
+      </div>
+      <div style="display:flex;width:100%">${segments}</div>
+    </div>`;
+  } else {
+    windowBarHtml = renderUsageBar(
+      'Window', windowLabel + ' · ' + w.totalHits + ' hits observed',
+      windowUsage, w.medianCeiling, w.ceilings.length, windowStale
+    );
+  }
+
+  // Build weekly bar HTML
+  if (w.weekly && w.weekly.ceiling) {
+    const wk = w.weekly;
+    const dayNames = ['Sat','Sun','Mon','Tue','Wed','Thu','Fri'];
+    if (wk.weekDays && wk.weekDays.length === 7) {
+      isWeeklySegmented = true;
+      const dayAllotment = w.daily?.ceiling || (wk.ceiling / 7);
+      const todayStr = laDateStr(new Date());
+      todayIdx = wk.weekDays.findIndex(wd => wd.date === todayStr);
+      const wkSegs = wk.weekDays.map((wd, i) => {
+        const isFirst = i === 0, isLast = i === 6;
+        const pct = Math.min(wd.usage / dayAllotment, 1) * 100;
+        const fillCls = pct < 50 ? 'low' : pct < 85 ? 'mid' : 'high';
+        const isCurrent = wd.date === todayStr;
+        const isPast = wd.date < todayStr;
+        const opacity = isPast ? 0.4 : isCurrent ? 1 : 0.55;
+        const br = isFirst ? '4px 0 0 4px' : isLast ? '0 4px 4px 0' : '0';
+        const gap = isLast ? '' : 'margin-right:1px';
+        const curCls = isCurrent ? ' wk-current' : '';
+        const mmdd = wd.date.slice(5).replace('-', '/');
+        return `<div class="wk-slot${curCls}" data-day="${wd.date}" onmouseenter="setHoverDay('${wd.date}')" onmouseleave="clearHoverDay()" style="opacity:${opacity};${gap}" title="${dayNames[i]} ${mmdd}: $${wd.usage.toFixed(2)} / $${dayAllotment.toFixed(2)} daily (${Math.round(pct)}%)">
+          <div class="wk-bar-part" style="border-radius:${br}">
+            <div class="wg-bar-fill ${fillCls}" style="width:${pct.toFixed(1)}%;height:100%;border-radius:${br}"></div>
+          </div>
+          <div class="wk-day-label">${dayNames[i]}</div>
+        </div>`;
+      }).join('');
+      const wkMb = '6';
+      weeklyBarHtml = `<div style="margin-bottom:${wkMb}px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+          <span style="font-size:12px;font-weight:600;color:var(--text)">Weekly</span>
+          <span style="font-size:10px;color:var(--muted)">${wk.week} · est. $${wk.ceiling.toFixed(2)} ceiling (${wk.dataPoints} samples)${wk.pct !== null ? ` · <span style="font-weight:600;color:var(--text)">${Math.round(wk.pct*100)}%</span>` : ''}</span>
+        </div>
+        <div style="display:flex;width:100%">${wkSegs}</div>
+      </div>`;
+    } else {
+      weeklyBarHtml = renderUsageBar('Weekly', wk.week, wk.usage, wk.ceiling, wk.dataPoints, '');
+    }
+  }
+
+  // Assemble: today's windows → zoom connector → weekly
+  if (windowBarHtml) bars.push(windowBarHtml);
+  if (isWindowSegmented && isWeeklySegmented && todayIdx >= 0) {
+    const lp = (todayIdx / 7 * 100).toFixed(2);
+    const rp = ((todayIdx + 1) / 7 * 100).toFixed(2);
+    bars.push(`<div style="position:relative;height:18px;color:var(--blue);margin-bottom:2px" aria-hidden="true">
+      <svg width="100%" height="18" viewBox="0 0 100 18" preserveAspectRatio="none" style="display:block">
+        <polygon points="0,0 100,0 ${rp},18 ${lp},18" fill="currentColor" opacity="0.06"/>
+        <line x1="0" y1="0" x2="${lp}" y2="18" stroke="currentColor" opacity="0.3" stroke-width="0.8"/>
+        <line x1="100" y1="0" x2="${rp}" y2="18" stroke="currentColor" opacity="0.3" stroke-width="0.8"/>
+      </svg>
+    </div>`);
+  }
+  if (weeklyBarHtml) bars.push(weeklyBarHtml);
+
+  const capParts = [];
+  if (w.daily && w.daily.ceiling) {
+    capParts.push(`<span style="font-size:11px;color:var(--muted)">Daily <span style="font-weight:600;color:var(--text)">~$${w.daily.ceiling.toFixed(2)}</span></span>`);
+  }
+  if (w.monthly && w.monthly.usage > 0) {
+    capParts.push(`<span style="font-size:11px;color:var(--muted)">Monthly <span style="font-weight:600;color:var(--blue)">$${w.monthly.usage.toFixed(2)}</span></span>`);
+  }
+  const capsRow = capParts.length ? `<div style="display:flex;gap:16px;align-items:baseline;margin-bottom:6px">
+    <span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Est. cap</span>
+    ${capParts.join('')}
+  </div>` : '';
+
+  return `<div class="window-gauge">
+    <div class="wg-header">
+      <span class="wg-title">Usage Limits Estimate</span>
+      <span class="wg-meta">auto-detected from ${w.totalHits} rate-limit events</span>
+    </div>
+    ${bars.join('')}${capsRow}
+  </div>`;
+}
+
+// --- Extra credit balance management ---
+// Stored in localStorage as total purchased amount. Balance = purchased - consumed.
+function getExtraPurchased() {
+  const stored = localStorage.getItem('claude-tracker-extraPurchased');
+  if (stored !== null) return parseFloat(stored);
+  return window.TRACKER_DATA?.extraPurchasedSeed || 0;
+}
+function setExtraPurchased(val) {
+  localStorage.setItem('claude-tracker-extraPurchased', String(Math.max(0, val)));
+}
+function adjustExtraCredit() {
+  const current = getExtraPurchased();
+  const input = prompt(
+    `Enter the amount to ADD to your extra credit balance.\n` +
+    `(e.g. "10" to add $10 of purchased credit)\n\n` +
+    `Current total purchased: $${current.toFixed(2)}`,
+    ''
+  );
+  if (input === null || input.trim() === '') return;
+  const amount = parseFloat(input);
+  if (isNaN(amount)) { alert('Invalid number'); return; }
+  if (amount < 0) {
+    // Allow negative to correct mistakes
+    if (!confirm(`Subtract $${Math.abs(amount).toFixed(2)} from purchased total?`)) return;
+  }
+  setExtraPurchased(current + amount);
+  renderTab(state.activeTab);
+}
+function resetExtraCredit() {
+  if (!confirm('Reset total purchased extra credit to $0?')) return;
+  setExtraPurchased(0);
+  renderTab(state.activeTab);
+}
+
+function renderExtraGauge() {
+  const t = state.tokens;
+  if (!t || !t.extraPerDay) return '';
+
+  const extraTotal = t.extraTotals?.cost || 0;
+  if (extraTotal === 0) return '';
+
+  const todayKey = laDateStr(new Date());
+  const thisMonth = todayKey.slice(0, 7);
+
+  // This month's extra
+  const monthExtra = Object.entries(t.extraPerDay)
+    .filter(([d]) => d.startsWith(thisMonth))
+    .reduce((sum, [, v]) => sum + v.cost, 0);
+
+  // Calculate days with extra usage this month
+  const extraDays = Object.keys(t.extraPerDay).filter(d => d.startsWith(thisMonth)).length;
+  const daysInMonth = new Date(+thisMonth.slice(0,4), +thisMonth.slice(5,7), 0).getDate();
+  const dayOfMonth = +todayKey.slice(8, 10);
+
+  // Project monthly run rate: (extra so far / days elapsed) * days in month
+  const projectedMonth = dayOfMonth > 0 ? (monthExtra / dayOfMonth) * daysInMonth : 0;
+
+  // Bar: show month extra relative to subscription cost ($20) for context
+  const subCost = 20;
+  const pct = Math.round(Math.min(monthExtra / subCost, 2) * 100);
+  const barPct = Math.min(pct, 100);
+  const cls = monthExtra < 5 ? 'low' : monthExtra < 15 ? 'mid' : 'high';
+
+  // Balance tracking
+  const purchased = getExtraPurchased();
+  const remaining = purchased - extraTotal;
+  const hasBalance = purchased > 0;
+  const balanceColor = remaining <= 0 ? 'var(--red)' : remaining < 5 ? 'var(--accent)' : 'var(--green)';
+
+  // If purchased credit exists, show bar as consumed/purchased instead of vs subscription
+  let barFill, barLabel, barRight;
+  if (hasBalance) {
+    const balPct = purchased > 0 ? Math.round(Math.min(extraTotal / purchased, 1.5) * 100) : 0;
+    const balBarPct = Math.min(balPct, 100);
+    const balCls = balPct < 50 ? 'low' : balPct < 85 ? 'mid' : 'high';
+    barFill = `<div class="wg-bar-fill ${balCls}" style="width:${balBarPct}%;background:var(--red)"></div>`;
+    barLabel = `<span class="wg-current" style="color:var(--red)">$${extraTotal.toFixed(2)} used</span>`;
+    barRight = `<span class="wg-ceiling" style="color:${balanceColor}">$${remaining.toFixed(2)} remaining</span>`;
+  } else {
+    barFill = `<div class="wg-bar-fill ${cls}" style="width:${barPct}%;background:var(--red)"></div>`;
+    barLabel = `<span class="wg-current" style="color:var(--red)">$${monthExtra.toFixed(2)} this month (${pct}% of $${subCost} subscription)</span>`;
+    barRight = `<span class="wg-ceiling">projected: ~$${projectedMonth.toFixed(2)}/mo at current pace</span>`;
+  }
+
+  return `<div class="window-gauge">
+    <div class="wg-header">
+      <span style="display:flex;align-items:center;gap:6px">
+        <span class="wg-title" style="color:var(--red)">Extra Credit Usage</span>${hasBalance ? `<span style="font-size:11px;color:var(--muted);font-weight:400">$${purchased.toFixed(2)} purchased</span>` : ''}
+        ${(() => {
+          const w = window.TRACKER_DATA?.windowUsage;
+          const nowMs2 = Date.now();
+          const curSlot = w?.todayWindows?.find(ww => ww.startEpoch <= nowMs2 && nowMs2 < ww.endEpoch);
+          const isExtra = curSlot && (w.hitEpochs || []).some(e => e >= curSlot.startEpoch && e < nowMs2);
+          return isExtra
+            ? `<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(248,81,73,0.15);padding:1px 5px;border-radius:3px;letter-spacing:0.03em">ON</span>`
+            : `<span style="font-size:9px;font-weight:600;color:var(--muted);background:rgba(139,148,158,0.12);padding:1px 5px;border-radius:3px;letter-spacing:0.03em">OFF</span>`;
+        })()}
+      </span>
+      <span class="wg-meta" style="display:flex;align-items:center;gap:8px">
+        <span>${thisMonth} · ${extraDays} days with extra</span>
+        <button onclick="adjustExtraCredit()" style="padding:2px 8px;font-size:10px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer">+ Add credit</button>
+        ${hasBalance ? '<button onclick="resetExtraCredit()" style="padding:2px 6px;font-size:10px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer">Reset</button>' : ''}
+      </span>
+    </div>
+    <div class="wg-bar-bg">${barFill}</div>
+    <div class="wg-stats">
+      ${barLabel}
+      ${barRight}
+    </div>
+  </div>`;
+}
+
+function renderOverview() {
+  const s = state.stats;
+  const t = state.tokens;
+  if (!s || !t) { document.getElementById('tabContent').innerHTML = '<div class="no-data">Loading...</div>'; return; }
+
+  const totals = t.totals || {};
+
+  // Activity chart — last 14 days (prompts)
+  const days = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    days.push(laDateStr(d));
+  }
+  const perDay = t.perDay || {};
+  const todayKey = laDateStr(new Date());
+
+  // Compute filtered chart data
+  const pdMap = buildProjectDayMap();
+
+  // For the Activity chart, count prompts per day (filtered by project if set)
+  const activityValues = days.map(day => {
+    if (state.filterProject) {
+      return pdMap[state.filterProject]?.[day]?.prompts || 0;
+    }
+    return s.perDay[day] || 0;
+  });
+
+  // For the Cost chart, sum cost per day (filtered by project if set)
+  const costValues = days.map(day => {
+    if (state.filterProject) {
+      return pdMap[state.filterProject]?.[day]?.cost || 0;
+    }
+    return perDay[day]?.cost || 0;
+  });
+
+  const extraValues = days.map(day => t.extraPerDay?.[day]?.cost || 0);
+
+  const todayCost = costValues[costValues.length - 1] || 0;
+  const todayPrompts = activityValues[activityValues.length - 1] || 0;
+  const todayExtra = t.extraPerDay?.[todayKey]?.cost || 0;
+
+  const thisMonth = todayKey.slice(0, 7);
+  const extraMonth = Object.entries(t.extraPerDay || {})
+    .filter(([d]) => d.startsWith(thisMonth))
+    .reduce((sum, [, v]) => sum + v.cost, 0);
+  let monthCost;
+  if (state.filterProject) {
+    monthCost = Object.entries(pdMap[state.filterProject] || {})
+      .filter(([d]) => d.startsWith(thisMonth))
+      .reduce((sum, [, v]) => sum + v.cost, 0);
+  } else {
+    monthCost = Object.entries(perDay)
+      .filter(([d]) => d.startsWith(thisMonth))
+      .reduce((sum, [, v]) => sum + v.cost, 0);
+  }
+
+  // Command feed (filtered) — show in overview tab where Top Projects used to be
+  const feedBase = filteredHistory();
+  const feedSorted = state.feedSort === 'expensive'
+    ? [...feedBase].sort((a, b) => b.cost - a.cost)
+    : [...feedBase].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  const feedHtml = renderFeedItems(filterBySearch(feedSorted).slice(0, 20));
+
+  document.getElementById('tabContent').innerHTML = `
+    <div class="overview-top">
+      <div class="stat-grid">
+        <div class="stat"><div class="label">Extra Credit Used</div><div class="value red">$${extraMonth.toFixed(2)}</div><div class="sub">this month · actual extra charges</div></div>
+        <div class="stat"><div class="label">Today (equiv.)</div><div class="value green">$${todayCost.toFixed(4)}</div><div class="sub">${todayPrompts} prompts${todayExtra > 0 ? ' · <span style="color:var(--red)">$' + todayExtra.toFixed(2) + ' extra</span>' : ''}</div></div>
+        <div class="stat"><div class="label">Input Tokens</div><div class="value blue">${fmtNum(totals.input_tokens)}</div><div class="sub">non-cached</div></div>
+        <div class="stat"><div class="label">Output Tokens</div><div class="value blue">${fmtNum(totals.output_tokens)}</div><div class="sub">${fmtNum(totals.messages)} turns</div></div>
+        <div class="stat"><div class="label">All-time Extra</div><div class="value red">$${(t.extraTotals?.cost || 0).toFixed(2)}</div><div class="sub">${t.extraTotals?.messages || 0} turns after limit</div></div>
+      </div>
+      <div>
+        ${renderWindowGauge()}
+        ${renderExtraGauge()}
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <h3>Activity & Cost — last 14 days${state.filterProject ? ' · filtered' : ''}</h3>
+      ${buildDualChart(days, activityValues, costValues, extraValues, v => String(Math.round(v)), v => v >= 1 ? '$' + v.toFixed(1) : v > 0 ? '$' + v.toFixed(2) : '$0', v => v > 0 ? '-$' + v.toFixed(2) : '')}
+    </div>
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <h3 style="margin-bottom:0">Recent Prompts${hasFilters() ? ' (filtered)' : ''}</h3>
+          <div style="display:flex;gap:2px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:2px">
+            <button onclick="setFeedSort('recent')" style="padding:2px 8px;border:none;border-radius:4px;font-size:11px;cursor:pointer;background:${state.feedSort==='recent'?'var(--border)':'transparent'};color:${state.feedSort==='recent'?'var(--text)':'var(--muted)'}">recent</button>
+            <button onclick="setFeedSort('expensive')" style="padding:2px 8px;border:none;border-radius:4px;font-size:11px;cursor:pointer;background:${state.feedSort==='expensive'?'var(--border)':'transparent'};color:${state.feedSort==='expensive'?'var(--text)':'var(--muted)'}">expensive</button>
+          </div>
+        </div>
+        <input type="text" id="feedSearchInput" placeholder="Search..." value="${escHtml(state.feedSearch)}" oninput="onFeedSearchOverview(this.value)" style="width:200px;padding:5px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;outline:none;font-family:inherit;" />
+      </div>
+      ${feedHtml || '<div class="no-data">No matching commands</div>'}
+    </div>
+  `;
+  applyHoverProjectSync();
+}
+
+function renderCost() {
+  const t = state.tokens;
+  if (!t) { document.getElementById('tabContent').innerHTML = '<div class="no-data">Loading...</div>'; return; }
+
+  const activeHistory = filteredHistory();
+  const useFilteredData = !!(state.filterProject || state.filterSession || state.filterDay);
+
+  let totals;
+  let projects;
+  let dayMap;
+
+  if (useFilteredData) {
+    totals = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, messages: 0 };
+    const projectMap = {};
+    dayMap = {};
+
+    for (const h of activeHistory) {
+      const c = h.tokenCounts || {};
+      totals.input_tokens += c.input_tokens || 0;
+      totals.output_tokens += c.output_tokens || 0;
+      totals.cache_creation_input_tokens += c.cache_creation_input_tokens || 0;
+      totals.cache_read_input_tokens += c.cache_read_input_tokens || 0;
+      totals.messages += c.messages || h.turns || 0;
+
+      const proj = h.project || '';
+      if (!projectMap[proj]) {
+        projectMap[proj] = {
+          project: proj,
+          cost: 0,
+          counts: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, messages: 0 },
+          isCowork: !!h.isCowork,
+        };
+      }
+      projectMap[proj].cost += typeof h.cost === 'number' ? h.cost : 0;
+      projectMap[proj].counts.input_tokens += c.input_tokens || 0;
+      projectMap[proj].counts.output_tokens += c.output_tokens || 0;
+      projectMap[proj].counts.cache_creation_input_tokens += c.cache_creation_input_tokens || 0;
+      projectMap[proj].counts.cache_read_input_tokens += c.cache_read_input_tokens || 0;
+      projectMap[proj].counts.messages += c.messages || h.turns || 0;
+      if (h.isCowork) projectMap[proj].isCowork = true;
+
+      const day = h.timestamp ? new Date(h.timestamp).toISOString().slice(0, 10) : null;
+      if (!day) continue;
+      if (!dayMap[day]) {
+        dayMap[day] = {
+          cost: 0,
+          counts: { output_tokens: 0, cache_read_input_tokens: 0 },
+        };
+      }
+      dayMap[day].cost += typeof h.cost === 'number' ? h.cost : 0;
+      dayMap[day].counts.output_tokens += c.output_tokens || 0;
+      dayMap[day].counts.cache_read_input_tokens += c.cache_read_input_tokens || 0;
+    }
+
+    projects = Object.values(projectMap).sort((a, b) => b.cost - a.cost);
+  } else {
+    totals = t.totals || {};
+    projects = t.projects || [];
+    dayMap = t.perDay || {};
+  }
+
+  const maxCost = Math.max(0.0001, projects[0]?.cost || 0);
+
+  const projectRows = projects.map(p => {
+    const name = p.project.split('/').slice(-3).join('/') || p.project;
+    const pct = Math.round((p.cost / maxCost) * 100);
+    const isFiltered = state.filterProject === p.project;
+    const badge = p.isCowork ? renderKindBadge('Scheduled') : '';
+    return `<div class="project-row${isFiltered ? ' highlight' : ''}${p.isCowork ? ' cowork' : ''}" data-project="${escAttr(p.project)}" onmouseenter="setHoverProject('${escAttr(p.project)}')" onmouseleave="clearHoverProject('${escAttr(p.project)}')">
+      <div class="project-name" title="${p.project}">${escHtml(name)}</div>
+      ${badge}
+      <div class="project-bar-bg"><div class="project-bar-fill" style="width:${pct}%"></div></div>
+      <div class="project-cost">$${p.cost.toFixed(3)}</div>
+    </div>`;
+  }).join('');
+
+  // Per day table (last 30 days, PT)
+  const dayKeys = Object.keys(dayMap || {}).sort().reverse().slice(0, 30);
+  const dayRows = dayKeys.map(d => {
+    const day = dayMap[d];
+    return `<div class="row">
+      <span class="key">${d}</span>
+      <span style="display:flex;gap:24px;align-items:center">
+        <span style="color:var(--muted);font-size:11px">${fmtNum(day.counts?.output_tokens)} out / ${fmtNum(day.counts?.cache_read_input_tokens)} cache read</span>
+        <span class="val green">$${day.cost.toFixed(4)}</span>
+      </span>
+    </div>`;
+  }).join('');
+
+  // Cost by command — all history sorted expensive-first
+  const cmdHistory = [...activeHistory].filter(h => h.cost > 0)
+    .sort((a, b) => b.cost - a.cost);
+  const maxCmdCost = cmdHistory[0]?.cost || 0.0001;
+  const cmdRows = cmdHistory.map(h => {
+    const label = h.display?.trim() || '(empty)';
+    const proj = h.project ? h.project.split('/').slice(-2).join('/') : '';
+    const date = h.timestamp ? new Date(h.timestamp).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' }) : '';
+    const pct = Math.round((h.cost / maxCmdCost) * 100);
+    const turns = h.turns ? `${h.turns}t` : '';
+    return `<div class="project-row" data-project="${escAttr(h.project || '')}" onmouseenter="setHoverProject('${escAttr(h.project || '')}')" onmouseleave="clearHoverProject('${escAttr(h.project || '')}')">
+      <div class="project-name" title="${escAttr(label)}" style="max-width:340px">${escHtml(label.length > 60 ? label.slice(0, 60) + '…' : label)}</div>
+      <div class="project-bar-bg" style="flex:1"><div class="project-bar-fill" style="width:${pct}%"></div></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
+        <span style="font-size:10px;color:var(--muted);white-space:nowrap">${proj}${date ? ' · ' + date : ''}${turns ? ' · ' + turns : ''}</span>
+        <div class="project-cost">$${h.cost.toFixed(3)}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  let breakdownTitle = 'By Project';
+  let breakdownNote = 'All-time estimated API-equivalent cost aggregated by project.';
+  let breakdownRows = projectRows || '<div class="no-data">No data</div>';
+
+  if (state.costBreakdown === 'day') {
+    breakdownTitle = 'By Day';
+    breakdownNote = 'Last 30 PT days. This differs from the Overview chart, which only shows the last 14 days and mixes prompt activity with cost.';
+    breakdownRows = dayRows || '<div class="no-data">No data</div>';
+  } else if (state.costBreakdown === 'command') {
+    breakdownTitle = 'By Command';
+    breakdownNote = 'All-time prompts sorted by estimated API-equivalent cost, highest first.';
+    breakdownRows = cmdRows || '<div class="no-data">No data</div>';
+  }
+
+  document.getElementById('tabContent').innerHTML = `
+    <div class="card">
+      <div class="breakdown-head">
+        <div class="breakdown-title-wrap">
+          <h3 style="margin-bottom:0">Token Totals</h3>
+          <div class="breakdown-subtitle">Aggregated breakdown of token volume and estimated API-equivalent cost${useFilteredData ? ' · filtered' : ''}</div>
+        </div>
+      </div>
+      <div class="token-strip">
+        <div class="token-chip"><div class="tlabel">Input Tokens</div><div class="tval blue">${fmtNum(totals.input_tokens)}</div></div>
+        <div class="token-chip"><div class="tlabel">Output Tokens</div><div class="tval blue">${fmtNum(totals.output_tokens)}</div></div>
+        <div class="token-chip"><div class="tlabel">Cache Written</div><div class="tval purple">${fmtNum(totals.cache_creation_input_tokens)}</div></div>
+        <div class="token-chip"><div class="tlabel">Cache Read</div><div class="tval purple">${fmtNum(totals.cache_read_input_tokens)}</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="breakdown-head">
+        <div class="breakdown-title-wrap">
+          <h3 style="margin-bottom:0">${breakdownTitle} <span style="font-size:11px;font-weight:400;color:var(--muted)">(subscription users: for reference only)</span></h3>
+          <div class="breakdown-subtitle">Where did usage go?</div>
+        </div>
+        <div class="view-switcher">
+          <button class="${state.costBreakdown === 'project' ? 'active' : ''}" onclick="setCostBreakdown('project')">By Project</button>
+          <button class="${state.costBreakdown === 'day' ? 'active' : ''}" onclick="setCostBreakdown('day')">By Day</button>
+          <button class="${state.costBreakdown === 'command' ? 'active' : ''}" onclick="setCostBreakdown('command')">By Command</button>
+        </div>
+      </div>
+      <div class="breakdown-note">${breakdownNote}</div>
+      ${breakdownRows}
+    </div>
+  `;
+  applyHoverProjectSync();
+}
+
+// Track which feed items are expanded (by index in the rendered list)
+if (!state.expandedFeedItems) state.expandedFeedItems = new Set();
+
+function toggleFeedItem(id) {
+  if (state.expandedFeedItems.has(id)) {
+    state.expandedFeedItems.delete(id);
+  } else {
+    state.expandedFeedItems.add(id);
+  }
+  // Re-render the current tab
+  renderTab(state.activeTab);
+}
+
+function renderTurnDetails(turnDetails) {
+  if (!turnDetails || !turnDetails.length) return '<div style="padding:8px;color:var(--muted);font-size:11px">No turn data available</div>';
+
+  const shortModel = m => {
+    if (m.includes('opus')) return 'opus';
+    if (m.includes('haiku')) return 'haiku';
+    if (m.includes('sonnet')) return 'sonnet';
+    return m.slice(0, 12);
+  };
+
+  // Cowork sessions have tool-call turn details — show a different table
+  if (turnDetails[0]?.isCoworkTool) {
+    const rows = turnDetails.map((t, i) => {
+      const time = t.ts ? new Date(t.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      return `<tr>
+        <td class="turn-num">${i + 1}</td>
+        <td class="turn-time">${time}</td>
+        <td class="turn-model" style="color:var(--accent)">${t.toolName || '?'}</td>
+        <td class="turn-tokens" style="color:var(--muted);max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" colspan="4">${escHtml(t.toolInput || '')}</td>
+      </tr>`;
+    }).join('');
+    return `<table class="turn-table">
+      <tr><th>#</th><th>Time</th><th>Tool</th><th colspan="4">Input</th></tr>
+      ${rows}
+    </table>`;
+  }
+
+  const rows = turnDetails.map((t, i) => {
+    const time = t.ts ? new Date(t.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+    const costStr = t.cost < 0.001 ? '$' + t.cost.toFixed(5) : '$' + t.cost.toFixed(4);
+    const extraTag = t.extra ? '<span class="turn-extra"> EXTRA</span>' : '';
+    return `<tr>
+      <td class="turn-num">${i + 1}</td>
+      <td class="turn-time">${time}</td>
+      <td class="turn-model">${shortModel(t.model)}</td>
+      <td class="turn-tokens">${fmtNum(t.in)} in</td>
+      <td class="turn-tokens">${fmtNum(t.out)} out</td>
+      <td class="turn-tokens">${fmtNum(t.cr)} cache</td>
+      <td class="turn-cost">${costStr}${extraTag}</td>
+    </tr>`;
+  }).join('');
+
+  return `<table class="turn-table">
+    <tr><th>#</th><th>Time</th><th>Model</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cost</th></tr>
+    ${rows}
+  </table>`;
+}
+
+// Shared feed item renderer used by both Overview and Command Feed tabs
+function renderFeedItems(items) {
+  if (!items.length) return '';
+  // Assign sequential window color index by 5h bucket (time-sorted so adjacent
+  // windows always get different colors regardless of display order)
+  const timeSorted = [...items].sort((a, b) => a.timestamp - b.timestamp);
+  let wIdx = 0, prevBkt = null;
+  const bucketColor = {};
+  for (const h of timeSorted) {
+    const bkt = Math.floor(h.timestamp / WIN_MS);
+    if (prevBkt !== null && bkt !== prevBkt) wIdx++;
+    prevBkt = bkt;
+    bucketColor[bkt] = wIdx;
+  }
+  return `<div class="feed">${items.map((h, idx) => {
+    const d = new Date(h.timestamp);
+    const itemDay = laDateStr(d);
+    const proj = (h.project || '').split('/').slice(-2).join('/');
+    const itemId = (h.sessionId || '') + '_' + h.timestamp;
+    const bkt = Math.floor(h.timestamp / WIN_MS);
+    const borderColor = WIN_COLORS[(bucketColor[bkt] ?? 0) % WIN_COLORS.length];
+    const isExpanded = state.expandedFeedItems.has(itemId);
+
+    let pill;
+    let costSummary = '';
+    let costlyBadge = '';
+    let costlyReason = '';
+    let costlyClass = '';
+    if (typeof h.cost !== 'number') {
+      pill = `<span class="cost-pill na" title="No transcript data">—</span>`;
+    } else {
+      const cost = h.cost;
+      const turns = h.turns || 0;
+      const cls = cost === 0 ? 'zero' : cost < 0.01 ? '' : cost < 0.10 ? 'mid' : 'high';
+      const label = cost === 0 ? '$0.00' : cost < 0.01 ? '$' + cost.toFixed(4) : '$' + cost.toFixed(3);
+      const c = h.tokenCounts || {};
+      const extraCost = h.extraCost || 0;
+      const extraNote = extraCost > 0 ? `  ·  $${extraCost.toFixed(3)} EXTRA CREDIT` : '';
+      const tip = `${turns} turn${turns === 1 ? '' : 's'}  ·  ${fmtNum(c.input_tokens)} in  ·  ${fmtNum(c.output_tokens)} out  ·  ${fmtNum(c.cache_read_input_tokens)} cache read  ·  ${fmtNum(c.cache_creation_input_tokens)} cache write${extraNote}`;
+      const extraBadge = extraCost > 0 ? '<span style="color:var(--red);font-size:9px;margin-left:4px">EXTRA</span>' : '';
+      pill = `<span class="cost-pill ${cls}" title="${tip}">${label}<span style="font-weight:400;opacity:0.7"> · ${turns} turns</span>${extraBadge}</span>`;
+
+      const outputTokens = c.output_tokens || 0;
+      const cacheWriteTokens = c.cache_creation_input_tokens || 0;
+      const signalParts = [];
+      let reason = '';
+      if (extraCost > 0) reason = 'extra credit';
+      else if (cacheWriteTokens >= 500000) reason = 'cache write';
+      else if (outputTokens >= 100000) reason = 'high output';
+      else if (turns >= 12) reason = 'many turns';
+
+      const isCostly = cost >= 0.10 || extraCost > 0 || outputTokens >= 100000 || cacheWriteTokens >= 500000 || turns >= 12;
+      if (isCostly) {
+        costlyClass = ' costly';
+        costlyBadge = renderKindBadge('Expensive', 'costly');
+        costlyReason = reason ? renderKindBadge(reason, 'cost-reason') : '';
+        if (outputTokens >= 50000) signalParts.push(`${fmtNum(outputTokens)} out`);
+        if (cacheWriteTokens >= 100000) signalParts.push(`${fmtNum(cacheWriteTokens)} cache write`);
+        if (extraCost > 0) signalParts.push(`$${extraCost.toFixed(2)} extra`);
+        costSummary = signalParts.length ? `<div class="feed-cost-summary">${signalParts.map(s => `<span>${escHtml(s)}</span>`).join('')}</div>` : '';
+      }
+    }
+
+    const expandIcon = h.turnDetails && h.turnDetails.length ? `<span style="color:var(--muted);font-size:10px;margin-right:4px">${isExpanded ? '▼' : '▶'}</span>` : '';
+    const details = isExpanded ? renderTurnDetails(h.turnDetails) : '';
+
+    let costTips = '';
+    if (isExpanded && typeof h.cost === 'number') {
+      const cost = h.cost, turns = h.turns || 0;
+      const c = h.tokenCounts || {};
+      const outputTokens = c.output_tokens || 0;
+      const cacheWriteTokens = c.cache_creation_input_tokens || 0;
+      const cacheReadTokens = c.cache_read_input_tokens || 0;
+      const extraCost = h.extraCost || 0;
+      const isCostly = cost >= 0.10 || extraCost > 0 || outputTokens >= 100000 || cacheWriteTokens >= 500000 || turns >= 12;
+      if (isCostly) {
+        const tips = [];
+        if (extraCost > 0) tips.push('Extra credit was charged — this ran after hitting a rate-limit window. Spreading work across windows or waiting for a reset avoids extra-credit charges.');
+        if (cacheWriteTokens >= 200000) tips.push('Large cache-write volume. Shorter, stable system prompts and reusing existing context reduce cache-write charges on future turns.');
+        if (outputTokens >= 100000) tips.push('High output volume. Ask Claude to be concise, use bullet points, or split a large task into focused sub-prompts to reduce output tokens.');
+        if (turns >= 12) tips.push('Long session with many turns. Front-loading context and instructions into fewer, more specific prompts reduces per-turn overhead.');
+        if (cacheReadTokens === 0 && cacheWriteTokens >= 50000) tips.push('Cache was written but not read. Prompt caching pays off when the same prefix is reused across multiple turns.');
+        if (cost >= 0.10 && tips.length === 0) tips.push('High total cost. Try breaking this task into smaller, focused prompts to avoid token overhead from accumulated context.');
+        if (tips.length) {
+          costTips = `<div style="margin-top:10px;padding:10px 12px;background:rgba(217,119,6,0.07);border:1px solid rgba(217,119,6,0.22);border-radius:6px;font-size:11px">
+            <div style="font-weight:700;color:var(--accent);margin-bottom:6px;font-size:11px">Cost-saving suggestions</div>
+            ${tips.map(t => `<div style="color:var(--muted);line-height:1.5;margin-bottom:4px">• ${t}</div>`).join('')}
+          </div>`;
+        }
+      }
+    }
+
+    const badge = h.isCowork ? renderKindBadge('Scheduled Task') : '';
+    const sessionPreview = h.sessionId ? `${h.sessionId.slice(0, 8)}…` : '—';
+
+    return `<div class="feed-item${h.isCowork ? ' cowork' : ''}${costlyClass}" data-project="${escAttr(h.project || '')}" data-day="${itemDay}" style="border-left:3px solid ${borderColor}" onclick="toggleFeedItem('${itemId}')" onmouseenter="setHoverProject('${escAttr(h.project || '')}');setHoverDay('${itemDay}')" onmouseleave="clearHoverProject('${escAttr(h.project || '')}');clearHoverDay()">
+      <div class="feed-head">
+        ${expandIcon}<div class="feed-copy">
+          <div class="feed-title-row">
+            ${badge}
+            ${costlyBadge}
+            ${costlyReason}
+            <div class="prompt-text">${escHtml(h.display || '')}</div>
+          </div>
+          ${costSummary}
+          <div class="prompt-meta">
+            <span class="project">${escHtml(proj)}</span>
+            <span>${d.toLocaleString()}</span>
+            <span style="color:var(--muted);font-size:10px">${escHtml(sessionPreview)}</span>
+          </div>
+        </div>
+        ${pill}
+      </div>
+      ${costTips}
+      ${details}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function renderFeed() {
+  const items = filterBySearch([...filteredHistory()].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)));
+  const searchVal = escHtml(state.feedSearch);
+  const searchBox = `<div style="margin-bottom:12px"><input type="text" id="feedSearchInput" placeholder="Search commands..." value="${searchVal}" oninput="onFeedSearch(this.value)" style="width:100%;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;outline:none;font-family:inherit;" /></div>`;
+  if (!items.length) {
+    document.getElementById('tabContent').innerHTML = searchBox + '<div class="no-data">No matching commands</div>';
+    applyHoverProjectSync();
+    return;
+  }
+  document.getElementById('tabContent').innerHTML = searchBox + renderFeedItems(items);
+  applyHoverProjectSync();
+  // Restore cursor position
+  const inp = document.getElementById('feedSearchInput');
+  if (inp) { inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length; }
+}
+
+function onFeedSearch(val) {
+  state.feedSearch = val;
+  renderFeed();
+}
+
+function setFeedSort(val) {
+  state.feedSort = val;
+  renderOverview();
+}
+
+function setSidebarProjectSort(val) {
+  state.sidebarProjectSort = val;
+  renderSidebar();
+}
+
+function setSidebarSessionSort(val) {
+  state.sidebarSessionSort = val;
+  renderSidebar();
+}
+
+function setCostBreakdown(val) {
+  state.costBreakdown = val;
+  localStorage.setItem('claude-tracker-costBreakdown', val);
+  renderCost();
+}
+
+function jumpToToolRow(targetIdx) {
+  const feed = document.getElementById('tool-feed');
+  const countEl = document.getElementById('tool-feed-count');
+  if (!feed) return;
+  // Pre-render rows up to targetIdx if not yet loaded
+  if (targetIdx >= state.toolRenderedCount) {
+    const startOff = state.toolRenderedCount;
+    const batch = state.toolAnnotated.slice(startOff, targetIdx + 1);
+    feed.insertAdjacentHTML('beforeend', batch.map((item, i) => toolEventRow(item, startOff + i)).join(''));
+    state.toolRenderedCount = targetIdx + 1;
+    if (countEl) countEl.textContent = `(${state.toolRenderedCount} of ${state.toolAnnotated.length})`;
+  }
+  const target = feed.querySelector(`[data-idx="${targetIdx}"]`);
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function onFeedSearchOverview(val) {
+  state.feedSearch = val;
+  renderOverview();
+  // Restore focus and cursor
+  const inp = document.getElementById('feedSearchInput');
+  if (inp) { inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length; }
+}
+
+function filterBySearch(items) {
+  const q = (state.feedSearch || '').trim().toLowerCase();
+  if (!q) return items;
+  return items.filter(h => {
+    const text = (h.display || '').toLowerCase();
+    const proj = (h.project || '').toLowerCase();
+    return text.includes(q) || proj.includes(q);
+  });
+}
+
+const TOOL_PAGE = 50;
+const WIN_COLORS = ['#58a6ff','#3fb950','#d97706','#a78bfa','#22d3ee','#f472b6','#fb923c','#34d399'];
+const WIN_MS = 5 * 60 * 60 * 1000;
+
+function toolWindowBucket(ts) {
+  return Math.floor(new Date(ts).getTime() / WIN_MS);
+}
+
+// Annotate events (newest-first) with a sequential window index that increments
+// each time the 5h epoch bucket changes. This ensures adjacent windows always
+// get different colors regardless of how many buckets apart they are.
+function annotateToolWindows(events) {
+  let winIdx = 0, prevBucket = null;
+  return events.map(e => {
+    const bucket = toolWindowBucket(e.timestamp);
+    if (prevBucket !== null && bucket !== prevBucket) winIdx++;
+    prevBucket = bucket;
+    return { e, winIdx };
+  });
+}
+
+function toolEventRow({ e, winIdx }, idx) {
+  const tool = e.tool_name || 'unknown';
+  const tagClass = tool === 'Bash' ? 'bash' : tool.startsWith('Edit') || tool.startsWith('Write') ? 'edit' : 'tool';
+  const input = e.tool_input ? JSON.stringify(e.tool_input).slice(0, 80) : '';
+  const color = WIN_COLORS[winIdx % WIN_COLORS.length];
+  const badge = e.isCowork ? renderKindBadge('Scheduled Task') : '';
+  const project = e.project ? `<span style="color:var(--cowork-text)">${escHtml((e.project || '').split('/').slice(-2).join('/'))}</span>` : '';
+  return `<div class="feed-item${e.isCowork ? ' cowork' : ''}" data-idx="${idx}" data-project="${escAttr(e.project || '')}" style="border-left:3px solid ${color}" onmouseenter="setHoverProject('${escAttr(e.project || '')}')" onmouseleave="clearHoverProject('${escAttr(e.project || '')}')">
+    <div class="prompt-meta" style="margin:0">
+      <span style="color:var(--muted)">${new Date(e.timestamp).toLocaleString()}</span>
+      ${badge}
+      <span class="tag ${tagClass}">${tool}</span>
+      <span class="tag" style="background:rgba(255,255,255,0.05);color:var(--muted)">${e.event_type}</span>
+      ${project}
+    </div>
+    <div class="prompt-text" style="margin-top:6px;font-size:12px;color:var(--muted)">${escHtml(input)}</div>
+  </div>`;
+}
+
+function renderTools() {
+  if (state.toolObserver) { state.toolObserver.disconnect(); state.toolObserver = null; }
+
+  const filtered = filteredEvents();
+  const toolCounts = {};
+  for (const e of filtered) {
+    const tool = e.tool_name || e.toolName || 'unknown';
+    toolCounts[tool] = (toolCounts[tool] || 0) + 1;
+  }
+  const entries = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]);
+
+  if (!entries.length) {
+    document.getElementById('tabContent').innerHTML = `<div class="no-data">No matching tool events.</div>`;
+    applyHoverProjectSync();
+    return;
+  }
+
+  const allAnnotated = annotateToolWindows([...filtered].reverse());
+
+  // Compute targets for quick-jump links (newest-first list, so "older" = higher index)
+  const dws = window.TRACKER_DATA?.windowUsage?.detectedWindows || [];
+  const now = Date.now();
+  const curWin = [...dws].reverse().find(w => w.startEpoch <= now) || null;
+  const prevWin = curWin ? [...dws].reverse().find(w => w.endEpoch <= curWin.startEpoch) : null;
+  const { start: todayStart } = todayPTRange();
+  // "prev window" jumps to the most recent event in that window — in newest-first order
+  // that's the first event older than the current window's start (≈ last activity before
+  // the gap between windows).
+  const prevWinTarget = prevWin
+    ? allAnnotated.findIndex(({ e }) => new Date(e.timestamp).getTime() < curWin.startEpoch)
+    : -1;
+  const yesterdayTarget = allAnnotated.findIndex(({ e }) => new Date(e.timestamp).getTime() < todayStart);
+
+  function jumpLink(label, targetIdx) {
+    if (targetIdx < 0) return '';
+    return `<button onclick="jumpToToolRow(${targetIdx})" style="padding:2px 8px;border:none;border-radius:4px;font-size:11px;cursor:pointer;background:transparent;color:var(--blue);text-decoration:underline">↓ ${label}</button>`;
+  }
+  const quickLinks = `<div style="display:flex;gap:4px;align-items:center">
+    ${jumpLink('prev window', prevWinTarget)}
+    ${jumpLink('yesterday', yesterdayTarget)}
+  </div>`;
+
+  // Store annotated array on state so jumpToToolRow can access it
+  state.toolAnnotated = allAnnotated;
+  state.toolRenderedCount = Math.min(TOOL_PAGE, allAnnotated.length);
+
+  const cards = entries.map(([tool, count]) => `
+    <div class="tool-card">
+      <div class="tool-name">${tool}</div>
+      <div class="tool-count">${count}</div>
+    </div>`).join('');
+
+  const firstBatch = allAnnotated.slice(0, TOOL_PAGE).map((item, i) => toolEventRow(item, i)).join('');
+  document.getElementById('tabContent').innerHTML = `
+    <div class="tools-grid">${cards}</div>
+    <div class="chart-wrap" style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
+      <h3 style="margin:0">Tool events${hasFilters() ? ' · filtered' : ''} <span id="tool-feed-count" style="font-weight:400;color:var(--muted);font-size:13px">(${state.toolRenderedCount} of ${allAnnotated.length})</span></h3>
+      ${quickLinks}
+    </div>
+    <div id="tool-feed" class="feed">${firstBatch || '<div class="no-data">No events</div>'}</div>
+    <div id="tool-sentinel" style="height:1px"></div>
+  `;
+  applyHoverProjectSync();
+
+  let offset = TOOL_PAGE;
+  if (offset >= allAnnotated.length) return;
+
+  const feed = document.getElementById('tool-feed');
+  const sentinel = document.getElementById('tool-sentinel');
+  const countEl = document.getElementById('tool-feed-count');
+  const root = document.querySelector('.main');
+
+  const observer = new IntersectionObserver(entries => {
+    if (!entries[0].isIntersecting) return;
+    const batch = allAnnotated.slice(offset, offset + TOOL_PAGE);
+    feed.insertAdjacentHTML('beforeend', batch.map((item, i) => toolEventRow(item, offset + i)).join(''));
+    offset += batch.length;
+    state.toolRenderedCount = offset;
+    countEl.textContent = `(${Math.min(offset, allAnnotated.length)} of ${allAnnotated.length})`;
+    if (offset >= allAnnotated.length) { observer.disconnect(); state.toolObserver = null; sentinel.remove(); }
+  }, { root, rootMargin: '200px' });
+
+  observer.observe(sentinel);
+  state.toolObserver = observer;
+}
+
+function fmtNum(n) {
+  if (!n) return '0';
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return String(n);
+}
+
+function renderKindBadge(label, variant = 'cowork') {
+  return `<span class="kind-badge ${escAttr(variant)}">${escHtml(label)}</span>`;
+}
+
+function escHtml(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escAttr(s) {
+  return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+}
+
+function formatSessionDate(d) {
+  const today = new Date().toISOString().slice(0, 10);
+  const dateStr = d.toISOString().slice(0, 10);
+  if (dateStr === today) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function formatRelative(d) {
+  const diff = Date.now() - d.getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h/24)}d ago`;
+}
+
+loadAll();
+
+// --- Page Up/Down scrolls .main ---
+document.addEventListener('keydown', e => {
+  if (e.key !== 'PageUp' && e.key !== 'PageDown') return;
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  const main = document.querySelector('.main');
+  if (!main) return;
+  e.preventDefault();
+  main.scrollBy({ top: e.key === 'PageDown' ? main.clientHeight * 0.9 : -main.clientHeight * 0.9, behavior: 'smooth' });
+});
+
+// --- Window usage notifications ---
+// Polls data.js every 15s; fires a system notification when window pct increases.
+(function () {
+  let lastPct = null;
+
+  async function notify(oldPct, newPct, wu) {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'default') await Notification.requestPermission();
+    if (Notification.permission !== 'granted') return;
+    const pct = Math.round(newPct * 100);
+    const delta = Math.round((newPct - oldPct) * 100);
+    const ceiling = wu?.medianCeiling != null ? ` · ceiling $${wu.medianCeiling.toFixed(2)}` : '';
+    new Notification(`Claude window: ${pct}% used (+${delta}%)`, {
+      body: `Current window${ceiling}`,
+      silent: true,
+    });
+  }
+
+  async function poll() {
+    try {
+      const resp = await fetch('data/data.js?t=' + Date.now());
+      if (!resp.ok) return;
+      const text = await resp.text();
+      // Run in a temp global so we don't clobber the live render data
+      eval(text.replace(/window\.TRACKER_DATA\b/, 'window.__TD_POLL__'));
+      const fresh = window.__TD_POLL__;
+      delete window.__TD_POLL__;
+      const newPct = fresh?.windowUsage?.pct ?? null;
+      if (newPct === null) return;
+      if (lastPct !== null && newPct > lastPct) notify(lastPct, newPct, fresh.windowUsage);
+      lastPct = newPct;
+    } catch (_) {}
+  }
+
+  // Seed lastPct from already-loaded data so the first poll doesn't false-fire
+  lastPct = window.TRACKER_DATA?.windowUsage?.pct ?? null;
+  setInterval(poll, 15000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="pragma" content="no-cache">
+<meta http-equiv="expires" content="0">
+<title>Codex Tracker</title>
+<style>
+  :root {
+    --bg: #f2efe7;
+    --panel: rgba(255,255,255,0.78);
+    --panel-strong: #fffdf8;
+    --border: rgba(71, 85, 105, 0.18);
+    --text: #12202f;
+    --muted: #5f6b7a;
+    --accent: #b45309;
+    --blue: #0f5d78;
+    --green: #19725d;
+    --shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--text);
+    font: 14px/1.4 "SF Mono", "Menlo", monospace;
+    background: radial-gradient(circle at top left, rgba(180,83,9,0.16), transparent 28%), radial-gradient(circle at top right, rgba(15,93,120,0.18), transparent 30%), linear-gradient(180deg, #f8f5ee 0%, #ece7dc 100%);
+  }
+  header {
+    padding: 28px 28px 18px;
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-end;
+  }
+  h1 { margin: 0; font-size: 24px; line-height: 1.1; letter-spacing: -0.03em; }
+  .subtitle { margin-top: 6px; color: var(--muted); max-width: 720px; }
+  .stamp { color: var(--muted); font-size: 12px; text-align: right; }
+  .page { padding: 0 28px 28px; display: grid; grid-template-columns: 320px 1fr; gap: 20px; }
+  .panel { background: var(--panel); backdrop-filter: blur(10px); border: 1px solid var(--border); border-radius: 18px; box-shadow: var(--shadow); }
+  .sidebar { padding: 18px; align-self: start; position: sticky; top: 20px; }
+  .content { display: grid; gap: 20px; }
+  .section { padding: 18px; }
+  .section h2, .sidebar h2 { margin: 0 0 14px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .stat { padding: 14px; border-radius: 14px; border: 1px solid var(--border); background: var(--panel-strong); }
+  .stat-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .stat-value { margin-top: 6px; font-size: 24px; font-weight: 700; }
+  .accent { color: var(--accent); }
+  .blue { color: var(--blue); }
+  .green { color: var(--green); }
+  .project-list, .table { display: grid; gap: 10px; }
+  .project-item, .table-row { padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: rgba(255,255,255,0.72); }
+  .row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .project-name, .thread-title { font-weight: 700; color: var(--blue); }
+  .muted { color: var(--muted); }
+  .tiny { font-size: 12px; }
+  .token-bar { margin-top: 8px; height: 6px; border-radius: 999px; background: rgba(15, 93, 120, 0.12); overflow: hidden; }
+  .token-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #d97706); }
+  .thread-meta, .prompt-meta { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 10px; color: var(--muted); font-size: 12px; }
+  .prompt-text { margin-top: 8px; white-space: pre-wrap; word-break: break-word; }
+  .daily-chart { display: grid; grid-template-columns: repeat(auto-fit, minmax(56px, 1fr)); gap: 10px; align-items: end; }
+  .bar-card { display: flex; flex-direction: column; gap: 6px; }
+  .bar-wrap { height: 120px; border-radius: 12px; background: rgba(15, 93, 120, 0.08); border: 1px solid rgba(15, 93, 120, 0.12); display: flex; align-items: end; overflow: hidden; }
+  .bar { width: 100%; background: linear-gradient(180deg, #0f5d78, #19725d); }
+  .bar-label { font-size: 11px; color: var(--muted); text-align: center; }
+  .empty { color: var(--muted); padding: 24px; text-align: center; }
+  @media (max-width: 980px) {
+    .page { grid-template-columns: 1fr; }
+    .sidebar { position: static; }
+    header { flex-direction: column; align-items: flex-start; }
+    .stamp { text-align: left; }
+  }
+</style>
+<script>
+  document.write('<scr' + 'ipt src="data/data.js?t=' + Date.now() + '"></scr' + 'ipt>');
+</script>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Codex Tracker</h1>
+    <div class="subtitle">Local view of Codex threads, prompts, project activity, and token usage based on <code>~/.codex</code> state.</div>
+  </div>
+  <div class="stamp" id="generatedAt">Waiting for data...</div>
+</header>
+<div class="page">
+  <aside class="panel sidebar">
+    <h2>Top Projects</h2>
+    <div id="projectList" class="project-list"></div>
+  </aside>
+  <main class="content">
+    <section class="panel section">
+      <h2>Overview</h2>
+      <div id="stats" class="stats"></div>
+    </section>
+    <section class="panel section">
+      <h2>Daily Activity</h2>
+      <div id="dailyChart" class="daily-chart"></div>
+    </section>
+    <section class="panel section">
+      <h2>Recent Threads</h2>
+      <div id="threadTable" class="table"></div>
+    </section>
+    <section class="panel section">
+      <h2>Recent Prompts</h2>
+      <div id="promptTable" class="table"></div>
+    </section>
+  </main>
+</div>
+<script>
+function number(n) {
+  return new Intl.NumberFormat('en-US').format(n || 0);
+}
+function fmtDate(value) {
+  return new Date(value).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+function renderStats(data) {
+  const stats = [
+    ['Threads', number(data.overview.threadCount), 'accent'],
+    ['Projects', number(data.overview.projectCount), 'blue'],
+    ['Prompts', number(data.overview.promptCount), 'green'],
+    ['Tokens', number(data.overview.totalTokens), 'accent'],
+    ['Active Days', number(data.overview.activeDays), 'blue'],
+    ['Avg Tokens / Thread', number(data.overview.avgTokensPerThread), 'green'],
+  ];
+  document.getElementById('stats').innerHTML = stats.map(([label, value, cls]) => `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value ${cls}">${value}</div></div>`).join('');
+}
+function renderProjects(data) {
+  const max = Math.max(...data.projects.map((p) => p.totalTokens), 1);
+  document.getElementById('projectList').innerHTML = (data.projects.slice(0, 12).map((project) => `<div class="project-item"><div class="row"><div class="project-name">${project.shortProject}</div><div class="accent">${number(project.totalTokens)}</div></div><div class="tiny muted">${project.projectLabel}</div><div class="thread-meta"><span>${number(project.threadCount)} threads</span><span>${number(project.promptCount)} prompts</span></div><div class="token-bar"><div class="token-fill" style="width:${(project.totalTokens / max) * 100}%"></div></div></div>`).join('')) || '<div class="empty">No project activity found.</div>';
+}
+function renderDaily(data) {
+  const points = data.daily.slice(-21);
+  const max = Math.max(...points.map((p) => p.tokens), 1);
+  document.getElementById('dailyChart').innerHTML = (points.map((point) => `<div class="bar-card" title="${point.date}: ${number(point.tokens)} tokens, ${number(point.prompts)} prompts"><div class="bar-wrap"><div class="bar" style="height:${Math.max((point.tokens / max) * 100, point.tokens ? 6 : 0)}%"></div></div><div class="bar-label">${point.date.slice(5)}</div></div>`).join('')) || '<div class="empty">No daily activity yet.</div>';
+}
+function renderThreads(data) {
+  document.getElementById('threadTable').innerHTML = (data.threads.slice(0, 20).map((thread) => `<div class="table-row"><div class="row"><div class="thread-title">${thread.title}</div><div class="accent">${number(thread.tokensUsed)} tokens</div></div><div class="thread-meta"><span>${thread.projectLabel}</span><span>${thread.model}</span><span>${thread.reasoningEffort}</span><span>${number(thread.promptCount)} prompts</span><span>Updated ${fmtDate(thread.updatedAt)}</span></div>${thread.lastPrompt ? `<div class="prompt-text">${thread.lastPrompt}</div>` : ''}</div>`).join('')) || '<div class="empty">No thread data found.</div>';
+}
+function renderPrompts(data) {
+  document.getElementById('promptTable').innerHTML = (data.recentPrompts.slice(0, 30).map((prompt) => `<div class="table-row"><div class="row"><div class="thread-title">${prompt.title}</div><div class="tiny muted">${fmtDate(prompt.ts)}</div></div><div class="prompt-meta"><span>${prompt.projectLabel}</span></div><div class="prompt-text">${prompt.text}</div></div>`).join('')) || '<div class="empty">No prompt data found.</div>';
+}
+function render() {
+  const data = window.TRACKER_DATA;
+  if (!data) {
+    document.body.innerHTML = '<div class="empty">No data found. Run <code>node codex/scripts/build.js</code> and reload.</div>';
+    return;
+  }
+  document.getElementById('generatedAt').textContent = `Generated ${fmtDate(data.generatedAt)}`;
+  renderStats(data);
+  renderProjects(data);
+  renderDaily(data);
+  renderThreads(data);
+  renderPrompts(data);
+}
+render();
+</script>
+</body>
+</html>

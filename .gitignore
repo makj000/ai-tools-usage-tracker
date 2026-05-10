@@ -1,5 +1,5 @@
 node_modules/
-data/
-data.js
+claude/data/data.js
+codex/data/data.js
 .env
 .claude/settings.local.json
