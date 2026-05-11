@@ -987,20 +987,31 @@ function maybeCleanup(oldFiles) {
 
 function writeMenubarJson(wu, totals) {
   try {
+    const windowMetric = wu ? {
+      usage: +(wu.currentUsage || 0).toFixed(4),
+      ceiling: wu.medianCeiling != null ? +wu.medianCeiling.toFixed(4) : null,
+      pct: wu.pctUsed != null ? +Math.min(wu.pctUsed, 1).toFixed(4) : null,
+      usageDisplay: `$${(wu.currentUsage || 0).toFixed(2)}`,
+      ceilingDisplay: wu.medianCeiling != null ? `$${wu.medianCeiling.toFixed(2)}` : null,
+      endEpoch: wu.windowEndEpoch || null,
+    } : null;
+    const weeklyMetric = wu?.weekly ? {
+      usage: +(wu.weekly.usage || 0).toFixed(4),
+      ceiling: wu.weekly.ceiling != null ? +wu.weekly.ceiling.toFixed(4) : null,
+      pct: wu.weekly.pct != null ? +Math.min(wu.weekly.pct, 1).toFixed(4) : null,
+      usageDisplay: `$${(wu.weekly.usage || 0).toFixed(2)}`,
+      ceilingDisplay: wu.weekly.ceiling != null ? `$${wu.weekly.ceiling.toFixed(2)}` : null,
+    } : null;
     const out = {
       updatedAt: new Date().toISOString(),
+      title: "Claude",
       reportPath: path.resolve(ROOT, "report.html"),
-      window: wu ? {
-        usage: +(wu.currentUsage || 0).toFixed(4),
-        ceiling: wu.medianCeiling != null ? +wu.medianCeiling.toFixed(4) : null,
-        pct: wu.pctUsed != null ? +Math.min(wu.pctUsed, 1).toFixed(4) : null,
-        endEpoch: wu.windowEndEpoch || null,
-      } : null,
-      weekly: wu?.weekly ? {
-        usage: +(wu.weekly.usage || 0).toFixed(4),
-        ceiling: wu.weekly.ceiling != null ? +wu.weekly.ceiling.toFixed(4) : null,
-        pct: wu.weekly.pct != null ? +Math.min(wu.weekly.pct, 1).toFixed(4) : null,
-      } : null,
+      primaryLabel: "Window",
+      secondaryLabel: "Week",
+      primary: windowMetric,
+      secondary: weeklyMetric,
+      window: windowMetric,
+      weekly: weeklyMetric,
     };
     fs.writeFileSync(MENUBAR_JSON_PATH, JSON.stringify(out, null, 2));
   } catch (e) {

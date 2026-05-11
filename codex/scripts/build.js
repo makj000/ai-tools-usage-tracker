@@ -9,7 +9,10 @@ const DATA_DIR = path.join(ROOT, "data");
 const OUTPUT = path.join(DATA_DIR, "data.js");
 const STATE_DB = path.join(os.homedir(), ".codex", "state_5.sqlite");
 const HISTORY_PATH = path.join(os.homedir(), ".codex", "history.jsonl");
+const MENUBAR_JSON_PATH = path.join(os.homedir(), ".codex", "codex-tracker-menubar.json");
 const TIME_ZONE = "America/Los_Angeles";
+const DAILY_CEILING_DAYS = 14;
+const WEEKLY_SERIES_DAYS = 56;
 
 function readJsonl(filePath) {
   if (!fs.existsSync(filePath)) return [];
@@ -202,6 +205,77 @@ function buildPromptFeed(history, threadsById, homeDir) {
     });
 }
 
+function compactNumber(value) {
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value || 0);
+}
+
+function buildRecentDailySeries(daily, days) {
+  const perDay = new Map(daily.map((entry) => [entry.date, entry]));
+  const series = [];
+  const now = new Date();
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    const date = new Date(now.getTime() - offset * 24 * 60 * 60 * 1000);
+    const key = laDate(date.getTime());
+    const bucket = perDay.get(key) || { date: key, threads: 0, prompts: 0, tokens: 0 };
+    series.push(bucket);
+  }
+  return series;
+}
+
+function rollingSums(series, size, field) {
+  const sums = [];
+  for (let start = 0; start + size <= series.length; start += 1) {
+    let total = 0;
+    for (let i = start; i < start + size; i += 1) total += series[i][field] || 0;
+    sums.push(total);
+  }
+  return sums;
+}
+
+function buildMenubarData(daily) {
+  const dailySeries = buildRecentDailySeries(daily, WEEKLY_SERIES_DAYS);
+  const last14 = dailySeries.slice(-DAILY_CEILING_DAYS);
+  const today = dailySeries[dailySeries.length - 1] || { tokens: 0, prompts: 0 };
+  const todayUsage = today.tokens || 0;
+  const todayPromptCount = today.prompts || 0;
+  const dailyCeiling = Math.max(1, ...last14.map((entry) => entry.tokens || 0));
+  const weeklyUsage = dailySeries.slice(-7).reduce((sum, entry) => sum + (entry.tokens || 0), 0);
+  const weeklyPromptCount = dailySeries.slice(-7).reduce((sum, entry) => sum + (entry.prompts || 0), 0);
+  const weeklyCeiling = Math.max(1, ...rollingSums(dailySeries, 7, "tokens"));
+
+  return {
+    updatedAt: new Date().toISOString(),
+    title: "Codex",
+    reportPath: path.resolve(ROOT, "report.html"),
+    primaryLabel: "Today",
+    secondaryLabel: "7 Days",
+    primary: {
+      usage: todayUsage,
+      ceiling: dailyCeiling,
+      pct: Math.min(todayUsage / dailyCeiling, 1),
+      usageDisplay: `${compactNumber(todayUsage)} tok`,
+      ceilingDisplay: `${compactNumber(dailyCeiling)} tok`,
+      detail: `${todayPromptCount} prompts`,
+    },
+    secondary: {
+      usage: weeklyUsage,
+      ceiling: weeklyCeiling,
+      pct: Math.min(weeklyUsage / weeklyCeiling, 1),
+      usageDisplay: `${compactNumber(weeklyUsage)} tok`,
+      ceilingDisplay: `${compactNumber(weeklyCeiling)} tok`,
+      detail: `${weeklyPromptCount} prompts`,
+    },
+  };
+}
+
+function writeMenubarJson(data) {
+  try {
+    fs.writeFileSync(MENUBAR_JSON_PATH, JSON.stringify(data, null, 2));
+  } catch (error) {
+    console.warn("[codex build] could not write menubar json:", error.message);
+  }
+}
+
 function writeDataFile(data) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(OUTPUT, `window.TRACKER_DATA = ${JSON.stringify(data)};\n`);
@@ -231,6 +305,7 @@ function main() {
     models,
   };
   writeDataFile(data);
+  writeMenubarJson(buildMenubarData(daily));
   console.log(`[codex build] wrote ${OUTPUT} with ${threads.length} threads and ${history.length} prompts`);
 }
 
@@ -240,6 +315,7 @@ if (require.main === module) {
 
 module.exports = {
   buildDailyActivity,
+  buildMenubarData,
   buildModelSummary,
   buildOverview,
   buildProjects,

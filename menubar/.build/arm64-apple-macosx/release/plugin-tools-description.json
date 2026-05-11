@@ -19,27 +19,27 @@
   "swiftCommands" : {
     "C.ClaudeMenuBar-arm64-apple-macosx-release.module" : {
       "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
-      "fileList" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/sources",
-      "importPath" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/Modules",
+      "fileList" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/sources",
+      "importPath" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/Modules",
       "inputs" : [
         {
           "kind" : "file",
-          "name" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/Sources/main.swift"
+          "name" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/Sources/main.swift"
         },
         {
           "kind" : "file",
-          "name" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
+          "name" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
         },
         {
           "kind" : "file",
-          "name" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/sources"
+          "name" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/sources"
         }
       ],
       "isLibrary" : false,
       "moduleName" : "ClaudeMenuBar",
-      "moduleOutputPath" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/Modules/ClaudeMenuBar.swiftmodule",
+      "moduleOutputPath" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/Modules/ClaudeMenuBar.swiftmodule",
       "objects" : [
-        "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/main.swift.o"
+        "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/main.swift.o"
       ],
       "otherArguments" : [
         "-target",
@@ -53,7 +53,7 @@
         "-DSWIFT_PACKAGE",
         "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
         "-module-cache-path",
-        "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ModuleCache",
+        "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ModuleCache",
         "-parseable-output",
         "-Xfrontend",
         "-entry-point-function-name",
@@ -87,22 +87,22 @@
         "-package-name",
         "menubar"
       ],
-      "outputFileMapPath" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/output-file-map.json",
+      "outputFileMapPath" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/output-file-map.json",
       "outputs" : [
         {
           "kind" : "file",
-          "name" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/main.swift.o"
+          "name" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/main.swift.o"
         },
         {
           "kind" : "file",
-          "name" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/Modules/ClaudeMenuBar.swiftmodule"
+          "name" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/Modules/ClaudeMenuBar.swiftmodule"
         }
       ],
       "prepareForIndexing" : false,
       "sources" : [
-        "/Users/kma/dev/tools-bots/claude-tracker/menubar/Sources/main.swift"
+        "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/Sources/main.swift"
       ],
-      "tempsPath" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build",
+      "tempsPath" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build",
       "wholeModuleOptimization" : true
     }
   },
@@ -117,9 +117,9 @@
       "-package-name",
       "menubar",
       "-c",
-      "/Users/kma/dev/tools-bots/claude-tracker/menubar/Sources/main.swift",
+      "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/Sources/main.swift",
       "-I",
-      "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/Modules",
+      "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/Modules",
       "-target",
       "arm64-apple-macosx13.0",
       "-whole-module-optimization",
@@ -131,7 +131,7 @@
       "-DSWIFT_PACKAGE",
       "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
       "-module-cache-path",
-      "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ModuleCache",
+      "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ModuleCache",
       "-parseable-output",
       "-Xfrontend",
       "-entry-point-function-name",
@@ -185,7 +185,7 @@
     }
   },
   "writeCommands" : {
-    "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/sources" : {
+    "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/sources" : {
       "alwaysOutOfDate" : false,
       "inputs" : [
         {
@@ -194,12 +194,12 @@
         },
         {
           "kind" : "file",
-          "name" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/Sources/main.swift"
+          "name" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/Sources/main.swift"
         }
       ],
-      "outputFilePath" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/sources"
+      "outputFilePath" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/sources"
     },
-    "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.product/Objects.LinkFileList" : {
+    "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.product/Objects.LinkFileList" : {
       "alwaysOutOfDate" : false,
       "inputs" : [
         {
@@ -208,12 +208,12 @@
         },
         {
           "kind" : "file",
-          "name" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/main.swift.o"
+          "name" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.build/main.swift.o"
         }
       ],
-      "outputFilePath" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.product/Objects.LinkFileList"
+      "outputFilePath" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/ClaudeMenuBar.product/Objects.LinkFileList"
     },
-    "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt" : {
+    "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt" : {
       "alwaysOutOfDate" : true,
       "inputs" : [
         {
@@ -225,7 +225,7 @@
           "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
         }
       ],
-      "outputFilePath" : "/Users/kma/dev/tools-bots/claude-tracker/menubar/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
+      "outputFilePath" : "/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/menubar/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
     }
   }
 }
