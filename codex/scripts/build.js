@@ -76,6 +76,21 @@ function isoFromEpoch(epochSeconds) {
   return new Date(epochSeconds * 1000).toISOString();
 }
 
+function formatResetDetail(epochSeconds) {
+  if (!Number.isInteger(epochSeconds)) return null;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: TIME_ZONE,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).formatToParts(new Date(epochSeconds * 1000));
+  const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `resets ${values.month} ${values.day}, ${values.hour}:${values.minute} ${values.dayPeriod} ${values.timeZoneName}`;
+}
+
 function groupPromptsBySession(history) {
   const grouped = new Map();
   for (const entry of history) {
@@ -217,12 +232,25 @@ function dateOnlyDiffDays(startDateStr, endDateStr) {
   return Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
 }
 
+function shiftDateStr(dateStr, days) {
+  const d = new Date(dateStr + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
 function buildWeeklyCycle(todayDateStr, resetEpoch) {
   if (!Number.isInteger(resetEpoch)) return null;
-  const resetDateStr = laDate(resetEpoch * 1000);
+  const resetDate = new Date(resetEpoch * 1000);
+  const resetDateStr = laDate(resetDate.getTime());
+  const includesResetDate =
+    resetDate.getHours() !== 0 ||
+    resetDate.getMinutes() !== 0 ||
+    resetDate.getSeconds() !== 0;
+  const cycleEndDateStr = includesResetDate ? resetDateStr : shiftDateStr(resetDateStr, -1);
+  const cycleStartDateStr = shiftDateStr(cycleEndDateStr, -(WEEKLY_CYCLE_DAYS - 1));
   const activeDots = Math.min(
     WEEKLY_CYCLE_DAYS,
-    Math.max(1, dateOnlyDiffDays(todayDateStr, resetDateStr) + 1)
+    Math.max(1, dateOnlyDiffDays(cycleStartDateStr, todayDateStr) + 1)
   );
   return {
     totalDots: WEEKLY_CYCLE_DAYS,
@@ -232,6 +260,29 @@ function buildWeeklyCycle(todayDateStr, resetEpoch) {
 }
 
 function latestRolloutPath() {
+  let newestPath = null;
+  let newestMtime = -1;
+
+  if (fs.existsSync(CODEX_SESSIONS_DIR)) {
+    const stack = [CODEX_SESSIONS_DIR];
+    while (stack.length) {
+      const dir = stack.pop();
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(fullPath);
+          continue;
+        }
+        if (!/^rollout-.*\.jsonl$/.test(entry.name)) continue;
+        const mtime = fs.statSync(fullPath).mtimeMs;
+        if (mtime > newestMtime) {
+          newestMtime = mtime;
+          newestPath = fullPath;
+        }
+      }
+    }
+  }
+
   if (fs.existsSync(STATE_DB)) {
     try {
       const rows = execSql(
@@ -239,32 +290,13 @@ function latestRolloutPath() {
         "select coalesce(rollout_path, '') as rollout_path from threads order by updated_at_ms desc, updated_at desc limit 1"
       );
       const rollout = rows[0] && rows[0].rollout_path;
-      if (rollout && fs.existsSync(rollout)) return rollout;
+      if (rollout && fs.existsSync(rollout)) {
+        const rolloutMtime = fs.statSync(rollout).mtimeMs;
+        if (rolloutMtime >= newestMtime) return rollout;
+      }
     } catch {}
   }
-
-  if (!fs.existsSync(CODEX_SESSIONS_DIR)) return null;
-
-  let latestPath = null;
-  let latestMtime = -1;
-  const stack = [CODEX_SESSIONS_DIR];
-  while (stack.length) {
-    const dir = stack.pop();
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(fullPath);
-        continue;
-      }
-      if (!/^rollout-.*\.jsonl$/.test(entry.name)) continue;
-      const mtime = fs.statSync(fullPath).mtimeMs;
-      if (mtime > latestMtime) {
-        latestMtime = mtime;
-        latestPath = fullPath;
-      }
-    }
-  }
-  return latestPath;
+  return newestPath;
 }
 
 function readLatestRateLimits() {
@@ -318,28 +350,38 @@ function buildMenubarData(daily) {
   const weeklyUsage = dailySeries.slice(-7).reduce((sum, entry) => sum + (entry.tokens || 0), 0);
   const weeklyPromptCount = dailySeries.slice(-7).reduce((sum, entry) => sum + (entry.prompts || 0), 0);
   const weeklyCeiling = Math.max(1, ...rollingSums(dailySeries, 7, "tokens"));
+  const primaryUsedPercent = rateLimits?.primary?.used_percent;
+  const secondaryUsedPercent = rateLimits?.secondary?.used_percent;
+  const hasPrimaryRateLimit = typeof primaryUsedPercent === "number";
+  const hasSecondaryRateLimit = typeof secondaryUsedPercent === "number";
+  const primaryRemainingPct = hasPrimaryRateLimit ? Math.max(0, Math.min(1, 1 - primaryUsedPercent / 100)) : Math.min(todayUsage / dailyCeiling, 1);
+  const secondaryRemainingPct = hasSecondaryRateLimit ? Math.max(0, Math.min(1, 1 - secondaryUsedPercent / 100)) : Math.min(weeklyUsage / weeklyCeiling, 1);
 
   return {
     updatedAt: new Date().toISOString(),
     title: "Codex",
     reportPath: path.resolve(ROOT, "report.html"),
-    primaryLabel: "Today",
-    secondaryLabel: "7 Days",
+    primaryLabel: hasPrimaryRateLimit ? "5h left" : "Today",
+    secondaryLabel: hasSecondaryRateLimit ? "Week left" : "7 Days",
     primary: {
-      usage: todayUsage,
-      ceiling: dailyCeiling,
-      pct: Math.min(todayUsage / dailyCeiling, 1),
-      usageDisplay: `${compactNumber(todayUsage)} tok`,
-      ceilingDisplay: `${compactNumber(dailyCeiling)} tok`,
-      detail: `${todayPromptCount} prompts`,
+      usage: hasPrimaryRateLimit ? Math.round(primaryRemainingPct * 100) : todayUsage,
+      ceiling: hasPrimaryRateLimit ? 100 : dailyCeiling,
+      pct: primaryRemainingPct,
+      usageDisplay: hasPrimaryRateLimit ? `${Math.round(primaryRemainingPct * 100)}% left` : `${compactNumber(todayUsage)} tok`,
+      ceilingDisplay: hasPrimaryRateLimit ? null : `${compactNumber(dailyCeiling)} tok`,
+      detail: hasPrimaryRateLimit ? formatResetDetail(rateLimits?.primary?.resets_at) : `${todayPromptCount} prompts`,
+      endEpoch: Number.isInteger(rateLimits?.primary?.resets_at) ? rateLimits.primary.resets_at : null,
+      isRemaining: hasPrimaryRateLimit || null,
     },
     secondary: {
-      usage: weeklyUsage,
-      ceiling: weeklyCeiling,
-      pct: Math.min(weeklyUsage / weeklyCeiling, 1),
-      usageDisplay: `${compactNumber(weeklyUsage)} tok`,
-      ceilingDisplay: `${compactNumber(weeklyCeiling)} tok`,
-      detail: `${weeklyPromptCount} prompts`,
+      usage: hasSecondaryRateLimit ? Math.round(secondaryRemainingPct * 100) : weeklyUsage,
+      ceiling: hasSecondaryRateLimit ? 100 : weeklyCeiling,
+      pct: secondaryRemainingPct,
+      usageDisplay: hasSecondaryRateLimit ? `${Math.round(secondaryRemainingPct * 100)}% left` : `${compactNumber(weeklyUsage)} tok`,
+      ceilingDisplay: hasSecondaryRateLimit ? null : `${compactNumber(weeklyCeiling)} tok`,
+      detail: hasSecondaryRateLimit ? formatResetDetail(rateLimits?.secondary?.resets_at) : `${weeklyPromptCount} prompts`,
+      endEpoch: Number.isInteger(rateLimits?.secondary?.resets_at) ? rateLimits.secondary.resets_at : null,
+      isRemaining: hasSecondaryRateLimit || null,
     },
     weeklyCycle: buildWeeklyCycle(todayDate, rateLimits?.secondary?.resets_at),
   };

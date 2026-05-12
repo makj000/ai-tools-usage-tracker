@@ -21,6 +21,7 @@ struct MenubarData: Codable {
         let ceilingDisplay: String?
         let detail: String?
         let endEpoch: Double?
+        let isRemaining: Bool?
     }
 
     struct WeeklyCycleData: Codable {
@@ -35,6 +36,26 @@ struct MenubarData: Codable {
     var resolvedSecondary: MetricData? { secondary ?? weekly }
 }
 
+struct StatuslineRateLimitCache: Codable {
+    let rateLimits: RateLimitsData?
+
+    struct RateLimitsData: Codable {
+        let sevenDay: LimitData?
+
+        enum CodingKeys: String, CodingKey {
+            case sevenDay = "seven_day"
+        }
+    }
+
+    struct LimitData: Codable {
+        let resetsAt: Double?
+
+        enum CodingKeys: String, CodingKey {
+            case resetsAt = "resets_at"
+        }
+    }
+}
+
 struct ProviderTheme {
     let tint: NSColor
     let primaryColor: NSColor
@@ -47,6 +68,7 @@ final class CombinedBarView: NSView {
     struct ProviderBars {
         let topPct: CGFloat
         let bottomPct: CGFloat
+        let topIsRemaining: Bool
         let cycleActiveDots: Int
         let cycleTotalDots: Int
         let theme: ProviderTheme
@@ -84,7 +106,8 @@ final class CombinedBarView: NSView {
         fill(x: x + inset, y: topBarY, w: barWidth, h: barH)
         fill(x: x + inset, y: bottomBarY, w: barWidth, h: barH)
 
-        let topColor = provider.topPct >= 0.9 ? provider.theme.primaryDangerColor : provider.theme.primaryColor
+        let topIsDanger = provider.topIsRemaining ? provider.topPct <= 0.1 : provider.topPct >= 0.9
+        let topColor = topIsDanger ? provider.theme.primaryDangerColor : provider.theme.primaryColor
         topColor.setFill()
         fill(x: x + inset, y: topBarY, w: barWidth * min(provider.topPct, 1), h: barH)
 
@@ -129,6 +152,7 @@ final class CombinedBarView: NSView {
 
 final class ProviderStatusController {
     let dataURL: URL
+    let weeklyResetCacheURL: URL?
     let fallbackBuildCommand: String
     let theme: ProviderTheme
 
@@ -140,8 +164,9 @@ final class ProviderStatusController {
     private var lastReportPath: String?
     private var currentData: MenubarData?
 
-    init(dataURL: URL, openTitle: String, fallbackBuildCommand: String, theme: ProviderTheme) {
+    init(dataURL: URL, weeklyResetCacheURL: URL? = nil, openTitle: String, fallbackBuildCommand: String, theme: ProviderTheme) {
         self.dataURL = dataURL
+        self.weeklyResetCacheURL = weeklyResetCacheURL
         self.openTitle = openTitle
         self.fallbackBuildCommand = fallbackBuildCommand
         self.theme = theme
@@ -196,11 +221,13 @@ final class ProviderStatusController {
     func barState() -> CombinedBarView.ProviderBars {
         let primaryPct = CGFloat(currentData?.resolvedPrimary?.pct ?? 0)
         let secondaryPct = CGFloat(currentData?.resolvedSecondary?.pct ?? 0)
-        let cycleTotalDots = currentData?.weeklyCycle?.totalDots ?? 0
-        let cycleActiveDots = currentData?.weeklyCycle?.activeDots ?? 0
+        let cycle = resolvedWeeklyCycle()
+        let cycleTotalDots = cycle?.totalDots ?? 0
+        let cycleActiveDots = cycle?.activeDots ?? 0
         return CombinedBarView.ProviderBars(
             topPct: primaryPct,
             bottomPct: secondaryPct,
+            topIsRemaining: currentData?.resolvedPrimary?.isRemaining ?? false,
             cycleActiveDots: cycleActiveDots,
             cycleTotalDots: cycleTotalDots,
             theme: theme
@@ -223,7 +250,7 @@ final class ProviderStatusController {
             secondaryMenuItem.title = "\(secondaryLabel): no data yet"
         }
 
-        resetMenuItem.title = formatReset(cycle: data.weeklyCycle)
+        resetMenuItem.title = formatReset(cycle: resolvedWeeklyCycle())
     }
 
     private func formatMetric(label: String, metric: MenubarData.MetricData, pct: Double) -> String {
@@ -251,6 +278,78 @@ final class ProviderStatusController {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "EEE MMM d, h:mm a z"
         return "Week resets: \(formatter.string(from: date))"
+    }
+
+    private func resolvedWeeklyCycle() -> MenubarData.WeeklyCycleData? {
+        if let cycle = currentData?.weeklyCycle {
+            return cycle
+        }
+        guard let resetEpoch = readFallbackResetEpoch() else { return nil }
+        return buildWeeklyCycle(resetEpoch: resetEpoch)
+    }
+
+    private func readFallbackResetEpoch() -> Double? {
+        guard let url = weeklyResetCacheURL,
+              let jsonData = try? Data(contentsOf: url),
+              let cache = try? JSONDecoder().decode(StatuslineRateLimitCache.self, from: jsonData)
+        else {
+            return nil
+        }
+        return cache.rateLimits?.sevenDay?.resetsAt
+    }
+
+    private func buildWeeklyCycle(resetEpoch: Double) -> MenubarData.WeeklyCycleData? {
+        let resetDate = Date(timeIntervalSince1970: resetEpoch)
+        guard let timeZone = TimeZone(identifier: "America/Los_Angeles") else { return nil }
+        let resetDateStr = laDateString(for: resetDate, timeZone: timeZone)
+        let includesResetDate = !isMidnight(date: resetDate, timeZone: timeZone)
+        let cycleEndDateStr = includesResetDate ? resetDateStr : shiftDateString(resetDateStr, by: -1)
+        let cycleStartDateStr = shiftDateString(cycleEndDateStr, by: -6)
+        let todayDateStr = laDateString(for: Date(), timeZone: timeZone)
+        let activeDots = min(7, max(1, dayDiff(from: cycleStartDateStr, to: todayDateStr) + 1))
+        return MenubarData.WeeklyCycleData(totalDots: 7, activeDots: activeDots, resetEpoch: resetEpoch)
+    }
+
+    private func laDateString(for date: Date, timeZone: TimeZone) -> String {
+        let formatter = DateFormatter()
+        formatter.timeZone = timeZone
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    private func isMidnight(date: Date, timeZone: TimeZone) -> Bool {
+        let calendar = Calendar(identifier: .gregorian)
+        var localCalendar = calendar
+        localCalendar.timeZone = timeZone
+        let components = localCalendar.dateComponents([.hour, .minute, .second], from: date)
+        return components.hour == 0 && components.minute == 0 && components.second == 0
+    }
+
+    private func shiftDateString(_ dateStr: String, by days: Int) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let date = formatter.date(from: dateStr),
+              let shifted = Calendar(identifier: .gregorian).date(byAdding: .day, value: days, to: date)
+        else {
+            return dateStr
+        }
+        return formatter.string(from: shifted)
+    }
+
+    private func dayDiff(from start: String, to end: String) -> Int {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let startDate = formatter.date(from: start),
+              let endDate = formatter.date(from: end)
+        else {
+            return 0
+        }
+        return Calendar(identifier: .gregorian).dateComponents([.day], from: startDate, to: endDate).day ?? 0
     }
 }
 
@@ -280,6 +379,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let claudeDataURL = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".claude/claude-tracker-menubar.json")
+    private static let claudeRateLimitCacheURL = URL(fileURLWithPath: NSHomeDirectory())
+        .appendingPathComponent(".claude/statusline-rate-limits.json")
     private static let codexDataURL = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".codex/codex-tracker-menubar.json")
 
@@ -287,6 +388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controllers = [
             ProviderStatusController(
                 dataURL: Self.claudeDataURL,
+                weeklyResetCacheURL: Self.claudeRateLimitCacheURL,
                 openTitle: "Open Claude Dashboard",
                 fallbackBuildCommand: "npm run build:claude",
                 theme: ProviderTheme(
