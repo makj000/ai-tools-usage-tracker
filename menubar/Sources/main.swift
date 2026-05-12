@@ -319,7 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildMenu() {
-        let barW: CGFloat = 40
+        let barW: CGFloat = 60
         statusItem = NSStatusBar.system.statusItem(withLength: barW + 4)
 
         if let btn = statusItem.button {
