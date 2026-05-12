@@ -107,6 +107,21 @@ function readStatuslineRateLimits() {
   }
 }
 
+function formatResetDetail(epochSeconds) {
+  if (!Number.isInteger(epochSeconds)) return null;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).formatToParts(new Date(epochSeconds * 1000));
+  const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `resets ${values.month} ${values.day}, ${values.hour}:${values.minute} ${values.dayPeriod} ${values.timeZoneName}`;
+}
+
 function laDateStrFromEpochSeconds(epochSeconds) {
   if (!Number.isInteger(epochSeconds)) return null;
   const la = toLADate(new Date(epochSeconds * 1000).toISOString());
@@ -119,13 +134,26 @@ function dateOnlyDiffDays(startDateStr, endDateStr) {
   return Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
 }
 
+function shiftDateStr(dateStr, days) {
+  const d = new Date(dateStr + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
 function buildWeeklyCycleFromReset(todayDateStr, resetEpoch) {
   if (!Number.isInteger(resetEpoch)) return null;
+  const resetDate = new Date(resetEpoch * 1000);
   const resetDateStr = laDateStrFromEpochSeconds(resetEpoch);
   if (!resetDateStr) return null;
+  const includesResetDate =
+    resetDate.getHours() !== 0 ||
+    resetDate.getMinutes() !== 0 ||
+    resetDate.getSeconds() !== 0;
+  const cycleEndDateStr = includesResetDate ? resetDateStr : shiftDateStr(resetDateStr, -1);
+  const cycleStartDateStr = shiftDateStr(cycleEndDateStr, -6);
   return {
     totalDots: 7,
-    activeDots: Math.min(7, Math.max(1, dateOnlyDiffDays(todayDateStr, resetDateStr) + 1)),
+    activeDots: Math.min(7, Math.max(1, dateOnlyDiffDays(cycleStartDateStr, todayDateStr) + 1)),
     resetEpoch,
   };
 }
@@ -1021,31 +1049,54 @@ function maybeCleanup(oldFiles) {
 function writeMenubarJson(wu, totals) {
   try {
     const rateLimits = readStatuslineRateLimits();
+    const fiveHourUsedPct = rateLimits?.five_hour?.used_percentage;
+    const sevenDayUsedPct = rateLimits?.seven_day?.used_percentage;
     const weeklyResetEpoch = rateLimits?.seven_day?.resets_at ?? null;
-    const windowMetric = wu ? {
+    const windowMetric = typeof fiveHourUsedPct === "number" ? {
+      usage: fiveHourUsedPct,
+      ceiling: 100,
+      pct: +Math.min(fiveHourUsedPct / 100, 1).toFixed(4),
+      usageDisplay: `${Math.round(fiveHourUsedPct)}% used`,
+      ceilingDisplay: null,
+      detail: formatResetDetail(rateLimits?.five_hour?.resets_at),
+      endEpoch: rateLimits?.five_hour?.resets_at ?? null,
+      isRemaining: false,
+    } : wu ? {
       usage: +(wu.currentUsage || 0).toFixed(4),
       ceiling: wu.medianCeiling != null ? +wu.medianCeiling.toFixed(4) : null,
       pct: wu.pctUsed != null ? +Math.min(wu.pctUsed, 1).toFixed(4) : null,
       usageDisplay: `$${(wu.currentUsage || 0).toFixed(2)}`,
       ceilingDisplay: wu.medianCeiling != null ? `$${wu.medianCeiling.toFixed(2)}` : null,
       endEpoch: wu.windowEndEpoch || null,
+      isRemaining: false,
     } : null;
-    const weeklyMetric = wu?.weekly ? {
+    const weeklyMetric = typeof sevenDayUsedPct === "number" ? {
+      usage: sevenDayUsedPct,
+      ceiling: 100,
+      pct: +Math.min(sevenDayUsedPct / 100, 1).toFixed(4),
+      usageDisplay: `${Math.round(sevenDayUsedPct)}% used`,
+      ceilingDisplay: null,
+      detail: formatResetDetail(weeklyResetEpoch),
+      endEpoch: weeklyResetEpoch,
+      isRemaining: false,
+    } : wu?.weekly ? {
       usage: +(wu.weekly.usage || 0).toFixed(4),
       ceiling: wu.weekly.ceiling != null ? +wu.weekly.ceiling.toFixed(4) : null,
       pct: wu.weekly.pct != null ? +Math.min(wu.weekly.pct, 1).toFixed(4) : null,
       usageDisplay: `$${(wu.weekly.usage || 0).toFixed(2)}`,
       ceilingDisplay: wu.weekly.ceiling != null ? `$${wu.weekly.ceiling.toFixed(2)}` : null,
+      isRemaining: false,
     } : null;
-    const weeklyCycle = wu?.weekly?.week
-      ? buildWeeklyCycleFromReset(wu.daily.date, weeklyResetEpoch)
+    const todayDate = wu?.daily?.date || laDateStrFromEpochSeconds(Math.floor(Date.now() / 1000));
+    const weeklyCycle = todayDate
+      ? buildWeeklyCycleFromReset(todayDate, weeklyResetEpoch)
       : null;
     const out = {
       updatedAt: new Date().toISOString(),
       title: "Claude",
       reportPath: path.resolve(ROOT, "report.html"),
-      primaryLabel: "Window",
-      secondaryLabel: "Week",
+      primaryLabel: "5h used",
+      secondaryLabel: "Week used",
       primary: windowMetric,
       secondary: weeklyMetric,
       window: windowMetric,
