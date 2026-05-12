@@ -16,6 +16,7 @@ const HISTORY_PATH = path.join(os.homedir(), ".claude", "history.jsonl");
 const PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
 const COWORK_BASE  = path.join(os.homedir(), "Library", "Application Support", "Claude", "local-agent-mode-sessions");
 const MENUBAR_JSON_PATH = path.join(os.homedir(), ".claude", "claude-tracker-menubar.json");
+const STATUSLINE_RATE_LIMIT_CACHE_PATH = path.join(os.homedir(), ".claude", "statusline-rate-limits.json");
 
 const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
 
@@ -95,6 +96,38 @@ function writeAtomic(target, content) {
   const tmp = target + ".tmp." + process.pid;
   fs.writeFileSync(tmp, content);
   fs.renameSync(tmp, target);
+}
+
+function readStatuslineRateLimits() {
+  if (!fs.existsSync(STATUSLINE_RATE_LIMIT_CACHE_PATH)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(STATUSLINE_RATE_LIMIT_CACHE_PATH, "utf8")).rate_limits || null;
+  } catch {
+    return null;
+  }
+}
+
+function laDateStrFromEpochSeconds(epochSeconds) {
+  if (!Number.isInteger(epochSeconds)) return null;
+  const la = toLADate(new Date(epochSeconds * 1000).toISOString());
+  return `${la.year}-${String(la.month).padStart(2, "0")}-${String(la.day).padStart(2, "0")}`;
+}
+
+function dateOnlyDiffDays(startDateStr, endDateStr) {
+  const start = new Date(startDateStr + "T12:00:00Z");
+  const end = new Date(endDateStr + "T12:00:00Z");
+  return Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+}
+
+function buildWeeklyCycleFromReset(todayDateStr, resetEpoch) {
+  if (!Number.isInteger(resetEpoch)) return null;
+  const resetDateStr = laDateStrFromEpochSeconds(resetEpoch);
+  if (!resetDateStr) return null;
+  return {
+    totalDots: 7,
+    activeDots: Math.min(7, Math.max(1, dateOnlyDiffDays(todayDateStr, resetDateStr) + 1)),
+    resetEpoch,
+  };
 }
 
 function slugToPath(slug) { return slug.replace(/-/g, "/").replace(/^\//, ""); }
@@ -987,6 +1020,8 @@ function maybeCleanup(oldFiles) {
 
 function writeMenubarJson(wu, totals) {
   try {
+    const rateLimits = readStatuslineRateLimits();
+    const weeklyResetEpoch = rateLimits?.seven_day?.resets_at ?? null;
     const windowMetric = wu ? {
       usage: +(wu.currentUsage || 0).toFixed(4),
       ceiling: wu.medianCeiling != null ? +wu.medianCeiling.toFixed(4) : null,
@@ -1002,6 +1037,9 @@ function writeMenubarJson(wu, totals) {
       usageDisplay: `$${(wu.weekly.usage || 0).toFixed(2)}`,
       ceilingDisplay: wu.weekly.ceiling != null ? `$${wu.weekly.ceiling.toFixed(2)}` : null,
     } : null;
+    const weeklyCycle = wu?.weekly?.week
+      ? buildWeeklyCycleFromReset(wu.daily.date, weeklyResetEpoch)
+      : null;
     const out = {
       updatedAt: new Date().toISOString(),
       title: "Claude",
@@ -1012,6 +1050,7 @@ function writeMenubarJson(wu, totals) {
       secondary: weeklyMetric,
       window: windowMetric,
       weekly: weeklyMetric,
+      weeklyCycle,
     };
     fs.writeFileSync(MENUBAR_JSON_PATH, JSON.stringify(out, null, 2));
   } catch (e) {

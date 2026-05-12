@@ -11,6 +11,7 @@ struct MenubarData: Codable {
     let secondary: MetricData?
     let window: MetricData?
     let weekly: MetricData?
+    let weeklyCycle: WeeklyCycleData?
 
     struct MetricData: Codable {
         let usage: Double
@@ -20,6 +21,12 @@ struct MenubarData: Codable {
         let ceilingDisplay: String?
         let detail: String?
         let endEpoch: Double?
+    }
+
+    struct WeeklyCycleData: Codable {
+        let totalDots: Int
+        let activeDots: Int
+        let resetEpoch: Double?
     }
 
     var resolvedPrimaryLabel: String { primaryLabel ?? "Window" }
@@ -33,12 +40,15 @@ struct ProviderTheme {
     let primaryColor: NSColor
     let primaryDangerColor: NSColor
     let secondaryColor: NSColor
+    let cycleColor: NSColor
 }
 
 final class CombinedBarView: NSView {
     struct ProviderBars {
         let topPct: CGFloat
         let bottomPct: CGFloat
+        let cycleActiveDots: Int
+        let cycleTotalDots: Int
         let theme: ProviderTheme
     }
 
@@ -60,26 +70,60 @@ final class CombinedBarView: NSView {
 
         let inset: CGFloat = 2
         let barH: CGFloat = 3
-        let gap: CGFloat = 2
-        let totalH = barH * 2 + gap
+        let barGap: CGFloat = 2
+        let cycleGap: CGFloat = 1.5
+        let dotSize: CGFloat = 2.4
+        let hasCycle = provider.cycleTotalDots > 0
+        let totalH = hasCycle ? (barH * 2 + barGap + cycleGap + dotSize) : (barH * 2 + barGap)
         let baseY = (bounds.height - totalH) / 2
         let barWidth = max(width - inset * 2, 0)
+        let bottomBarY = hasCycle ? (baseY + dotSize + cycleGap) : baseY
+        let topBarY = bottomBarY + barH + barGap
 
         NSColor.tertiaryLabelColor.withAlphaComponent(0.22).setFill()
-        fill(x: x + inset, y: baseY + barH + gap, w: barWidth, h: barH)
-        fill(x: x + inset, y: baseY, w: barWidth, h: barH)
+        fill(x: x + inset, y: topBarY, w: barWidth, h: barH)
+        fill(x: x + inset, y: bottomBarY, w: barWidth, h: barH)
 
         let topColor = provider.topPct >= 0.9 ? provider.theme.primaryDangerColor : provider.theme.primaryColor
         topColor.setFill()
-        fill(x: x + inset, y: baseY + barH + gap, w: barWidth * min(provider.topPct, 1), h: barH)
+        fill(x: x + inset, y: topBarY, w: barWidth * min(provider.topPct, 1), h: barH)
 
         provider.theme.secondaryColor.setFill()
-        fill(x: x + inset, y: baseY, w: barWidth * min(provider.bottomPct, 1), h: barH)
+        fill(x: x + inset, y: bottomBarY, w: barWidth * min(provider.bottomPct, 1), h: barH)
+
+        if hasCycle {
+            NSColor.white.withAlphaComponent(0.96).setFill()
+            fill(x: x + inset, y: baseY, w: barWidth, h: dotSize)
+            drawCycleDots(
+                x: x + inset,
+                y: baseY,
+                width: barWidth,
+                provider: provider,
+                dotSize: dotSize
+            )
+        }
     }
 
     private func fill(x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat) {
         guard w > 0 else { return }
         NSBezierPath(roundedRect: NSRect(x: x, y: y, width: w, height: h), xRadius: 1.5, yRadius: 1.5).fill()
+    }
+
+    private func drawCycleDots(x: CGFloat, y: CGFloat, width: CGFloat, provider: ProviderBars, dotSize: CGFloat) {
+        let totalDots = max(provider.cycleTotalDots, 0)
+        guard totalDots > 0 else { return }
+
+        let activeDots = min(max(provider.cycleActiveDots, 0), totalDots)
+        let spacing = totalDots > 1 ? (width - dotSize) / CGFloat(totalDots - 1) : 0
+
+        for idx in 0..<totalDots {
+            let dotRect = NSRect(x: x + CGFloat(idx) * spacing, y: y, width: dotSize, height: dotSize)
+            let color = idx < activeDots
+                ? NSColor.black.withAlphaComponent(0.92)
+                : NSColor.black.withAlphaComponent(0.22)
+            color.setFill()
+            NSBezierPath(ovalIn: dotRect).fill()
+        }
     }
 }
 
@@ -91,6 +135,7 @@ final class ProviderStatusController {
     private let openTitle: String
     private var primaryMenuItem: NSMenuItem!
     private var secondaryMenuItem: NSMenuItem!
+    private var resetMenuItem: NSMenuItem!
     private var openMenuItem: NSMenuItem!
     private var lastReportPath: String?
     private var currentData: MenubarData?
@@ -115,6 +160,10 @@ final class ProviderStatusController {
         secondaryMenuItem.isEnabled = false
         menu.addItem(secondaryMenuItem)
 
+        resetMenuItem = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
+        resetMenuItem.isEnabled = false
+        menu.addItem(resetMenuItem)
+
         openMenuItem = NSMenuItem(title: openTitle, action: #selector(AppDelegate.openDashboardFromMenuItem(_:)), keyEquivalent: "")
         openMenuItem.target = target
         openMenuItem.representedObject = self
@@ -134,6 +183,7 @@ final class ProviderStatusController {
             currentData = nil
             primaryMenuItem.title = "No data (run \(fallbackBuildCommand))"
             secondaryMenuItem.title = "Waiting for metrics"
+            resetMenuItem.title = "Week reset: unavailable"
             openMenuItem.isEnabled = false
             return
         }
@@ -146,7 +196,15 @@ final class ProviderStatusController {
     func barState() -> CombinedBarView.ProviderBars {
         let primaryPct = CGFloat(currentData?.resolvedPrimary?.pct ?? 0)
         let secondaryPct = CGFloat(currentData?.resolvedSecondary?.pct ?? 0)
-        return CombinedBarView.ProviderBars(topPct: primaryPct, bottomPct: secondaryPct, theme: theme)
+        let cycleTotalDots = currentData?.weeklyCycle?.totalDots ?? 0
+        let cycleActiveDots = currentData?.weeklyCycle?.activeDots ?? 0
+        return CombinedBarView.ProviderBars(
+            topPct: primaryPct,
+            bottomPct: secondaryPct,
+            cycleActiveDots: cycleActiveDots,
+            cycleTotalDots: cycleTotalDots,
+            theme: theme
+        )
     }
 
     private func updateDisplay(data: MenubarData) {
@@ -164,6 +222,8 @@ final class ProviderStatusController {
         } else {
             secondaryMenuItem.title = "\(secondaryLabel): no data yet"
         }
+
+        resetMenuItem.title = formatReset(cycle: data.weeklyCycle)
     }
 
     private func formatMetric(label: String, metric: MenubarData.MetricData, pct: Double) -> String {
@@ -179,6 +239,18 @@ final class ProviderStatusController {
             return "\(label): \(pctInt)%  (\(usage) / \(ceiling))"
         }
         return "\(label): \(pctInt)%  (\(usage))"
+    }
+
+    private func formatReset(cycle: MenubarData.WeeklyCycleData?) -> String {
+        guard let resetEpoch = cycle?.resetEpoch else {
+            return "Week reset: unavailable"
+        }
+        let date = Date(timeIntervalSince1970: resetEpoch)
+        let formatter = DateFormatter()
+        formatter.timeZone = TimeZone(identifier: "America/Los_Angeles")
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "EEE MMM d, h:mm a z"
+        return "Week resets: \(formatter.string(from: date))"
     }
 }
 
@@ -221,7 +293,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     tint: NSColor.systemOrange.withAlphaComponent(0.16),
                     primaryColor: .systemOrange,
                     primaryDangerColor: .systemRed,
-                    secondaryColor: .systemGreen
+                    secondaryColor: .systemGreen,
+                    cycleColor: .black
                 )
             ),
             ProviderStatusController(
@@ -232,7 +305,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     tint: NSColor.systemBlue.withAlphaComponent(0.16),
                     primaryColor: .systemBlue,
                     primaryDangerColor: .systemRed,
-                    secondaryColor: .systemTeal
+                    secondaryColor: .systemTeal,
+                    cycleColor: .black
                 )
             )
         ]

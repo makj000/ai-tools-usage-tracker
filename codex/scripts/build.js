@@ -13,6 +13,8 @@ const MENUBAR_JSON_PATH = path.join(os.homedir(), ".codex", "codex-tracker-menub
 const TIME_ZONE = "America/Los_Angeles";
 const DAILY_CEILING_DAYS = 14;
 const WEEKLY_SERIES_DAYS = 56;
+const WEEKLY_CYCLE_DAYS = 7;
+const CODEX_SESSIONS_DIR = path.join(os.homedir(), ".codex", "sessions");
 
 function readJsonl(filePath) {
   if (!fs.existsSync(filePath)) return [];
@@ -209,6 +211,78 @@ function compactNumber(value) {
   return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value || 0);
 }
 
+function dateOnlyDiffDays(startDateStr, endDateStr) {
+  const start = new Date(startDateStr + "T12:00:00Z");
+  const end = new Date(endDateStr + "T12:00:00Z");
+  return Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+}
+
+function buildWeeklyCycle(todayDateStr, resetEpoch) {
+  if (!Number.isInteger(resetEpoch)) return null;
+  const resetDateStr = laDate(resetEpoch * 1000);
+  const activeDots = Math.min(
+    WEEKLY_CYCLE_DAYS,
+    Math.max(1, dateOnlyDiffDays(todayDateStr, resetDateStr) + 1)
+  );
+  return {
+    totalDots: WEEKLY_CYCLE_DAYS,
+    activeDots,
+    resetEpoch,
+  };
+}
+
+function latestRolloutPath() {
+  if (fs.existsSync(STATE_DB)) {
+    try {
+      const rows = execSql(
+        STATE_DB,
+        "select coalesce(rollout_path, '') as rollout_path from threads order by updated_at_ms desc, updated_at desc limit 1"
+      );
+      const rollout = rows[0] && rows[0].rollout_path;
+      if (rollout && fs.existsSync(rollout)) return rollout;
+    } catch {}
+  }
+
+  if (!fs.existsSync(CODEX_SESSIONS_DIR)) return null;
+
+  let latestPath = null;
+  let latestMtime = -1;
+  const stack = [CODEX_SESSIONS_DIR];
+  while (stack.length) {
+    const dir = stack.pop();
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+      if (!/^rollout-.*\.jsonl$/.test(entry.name)) continue;
+      const mtime = fs.statSync(fullPath).mtimeMs;
+      if (mtime > latestMtime) {
+        latestMtime = mtime;
+        latestPath = fullPath;
+      }
+    }
+  }
+  return latestPath;
+}
+
+function readLatestRateLimits() {
+  const rolloutPath = latestRolloutPath();
+  if (!rolloutPath) return null;
+
+  const lines = fs.readFileSync(rolloutPath, "utf8").split("\n").filter(Boolean);
+  let latestPayload = null;
+  for (const line of lines) {
+    try {
+      const entry = JSON.parse(line);
+      if (entry.type !== "event_msg" || entry.payload?.type !== "token_count") continue;
+      latestPayload = entry.payload;
+    } catch {}
+  }
+  return latestPayload?.rate_limits || null;
+}
+
 function buildRecentDailySeries(daily, days) {
   const perDay = new Map(daily.map((entry) => [entry.date, entry]));
   const series = [];
@@ -236,6 +310,8 @@ function buildMenubarData(daily) {
   const dailySeries = buildRecentDailySeries(daily, WEEKLY_SERIES_DAYS);
   const last14 = dailySeries.slice(-DAILY_CEILING_DAYS);
   const today = dailySeries[dailySeries.length - 1] || { tokens: 0, prompts: 0 };
+  const todayDate = today.date || laDate(Date.now());
+  const rateLimits = readLatestRateLimits();
   const todayUsage = today.tokens || 0;
   const todayPromptCount = today.prompts || 0;
   const dailyCeiling = Math.max(1, ...last14.map((entry) => entry.tokens || 0));
@@ -265,6 +341,7 @@ function buildMenubarData(daily) {
       ceilingDisplay: `${compactNumber(weeklyCeiling)} tok`,
       detail: `${weeklyPromptCount} prompts`,
     },
+    weeklyCycle: buildWeeklyCycle(todayDate, rateLimits?.secondary?.resets_at),
   };
 }
 
