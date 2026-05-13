@@ -1,6 +1,6 @@
 {
   "name": "agentic-tool-usage-tracker",
-  "version": "3.23.2",
+  "version": "3.23.7",
   "description": "Track Claude Code and Codex usage with local dashboards and a shared menubar app",
   "scripts": {
     "build": "npm run build:claude && npm run build:codex",

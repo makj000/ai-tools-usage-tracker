@@ -1,6 +1,28 @@
 import AppKit
 import Darwin
 
+struct AppVersion {
+    static let current = load()
+
+    private static func load() -> String {
+        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+        let repoRootURL = executableURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let packageURL = repoRootURL.appendingPathComponent("package.json")
+        guard let data = try? Data(contentsOf: packageURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let version = json["version"] as? String,
+              !version.isEmpty
+        else {
+            return "unknown"
+        }
+        return version
+    }
+}
+
 struct MenubarData: Codable {
     let updatedAt: String?
     let title: String?
@@ -64,6 +86,8 @@ struct ProviderTheme {
     let cycleColor: NSColor
 }
 
+private let weeklyCycleSeconds: Double = 7 * 24 * 60 * 60
+
 final class CombinedBarView: NSView {
     struct ProviderBars {
         let topPct: CGFloat
@@ -87,7 +111,7 @@ final class CombinedBarView: NSView {
 
     private func drawProvider(x: CGFloat, width: CGFloat, provider: ProviderBars) {
         let bgRect = NSRect(x: x, y: 1, width: width, height: bounds.height - 2)
-        provider.theme.tint.setFill()
+        NSColor(calibratedWhite: 0.9, alpha: 1).setFill()
         NSBezierPath(roundedRect: bgRect, xRadius: 4, yRadius: 4).fill()
 
         let inset: CGFloat = 2
@@ -155,21 +179,23 @@ final class ProviderStatusController {
     let weeklyResetCacheURL: URL?
     let fallbackBuildCommand: String
     let theme: ProviderTheme
+    let usagePageURL: URL?
 
     private let openTitle: String
     private var primaryMenuItem: NSMenuItem!
     private var secondaryMenuItem: NSMenuItem!
-    private var resetMenuItem: NSMenuItem!
+    private var openUsageMenuItem: NSMenuItem!
     private var openMenuItem: NSMenuItem!
     private var lastReportPath: String?
     private var currentData: MenubarData?
 
-    init(dataURL: URL, weeklyResetCacheURL: URL? = nil, openTitle: String, fallbackBuildCommand: String, theme: ProviderTheme) {
+    init(dataURL: URL, weeklyResetCacheURL: URL? = nil, openTitle: String, fallbackBuildCommand: String, theme: ProviderTheme, usagePageURL: URL? = nil) {
         self.dataURL = dataURL
         self.weeklyResetCacheURL = weeklyResetCacheURL
         self.openTitle = openTitle
         self.fallbackBuildCommand = fallbackBuildCommand
         self.theme = theme
+        self.usagePageURL = usagePageURL
     }
 
     func install(into menu: NSMenu, target: AppDelegate) {
@@ -185,14 +211,16 @@ final class ProviderStatusController {
         secondaryMenuItem.isEnabled = false
         menu.addItem(secondaryMenuItem)
 
-        resetMenuItem = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
-        resetMenuItem.isEnabled = false
-        menu.addItem(resetMenuItem)
-
         openMenuItem = NSMenuItem(title: openTitle, action: #selector(AppDelegate.openDashboardFromMenuItem(_:)), keyEquivalent: "")
         openMenuItem.target = target
         openMenuItem.representedObject = self
         menu.addItem(openMenuItem)
+
+        openUsageMenuItem = NSMenuItem(title: "Open Official Usage Page", action: #selector(AppDelegate.openUsagePageFromMenuItem(_:)), keyEquivalent: "")
+        openUsageMenuItem.target = target
+        openUsageMenuItem.representedObject = self
+        openUsageMenuItem.isEnabled = usagePageURL != nil
+        menu.addItem(openUsageMenuItem)
 
         menu.addItem(.separator())
     }
@@ -202,13 +230,17 @@ final class ProviderStatusController {
         NSWorkspace.shared.open(URL(fileURLWithPath: reportPath))
     }
 
+    func openUsagePage() {
+        guard let usagePageURL else { return }
+        NSWorkspace.shared.open(usagePageURL)
+    }
+
     func refresh() {
         guard let jsonData = try? Data(contentsOf: dataURL),
               let data = try? JSONDecoder().decode(MenubarData.self, from: jsonData) else {
             currentData = nil
             primaryMenuItem.title = "No data (run \(fallbackBuildCommand))"
             secondaryMenuItem.title = "Waiting for metrics"
-            resetMenuItem.title = "Week reset: unavailable"
             openMenuItem.isEnabled = false
             return
         }
@@ -219,8 +251,8 @@ final class ProviderStatusController {
     }
 
     func barState() -> CombinedBarView.ProviderBars {
-        let primaryPct = CGFloat(currentData?.resolvedPrimary?.pct ?? 0)
-        let secondaryPct = CGFloat(currentData?.resolvedSecondary?.pct ?? 0)
+        let primaryPct = CGFloat(displayBarPct(for: currentData?.resolvedPrimary) ?? 0)
+        let secondaryPct = CGFloat(displayBarPct(for: currentData?.resolvedSecondary) ?? 0)
         let cycle = resolvedWeeklyCycle()
         let cycleTotalDots = cycle?.totalDots ?? 0
         let cycleActiveDots = cycle?.activeDots ?? 0
@@ -232,6 +264,14 @@ final class ProviderStatusController {
             cycleTotalDots: cycleTotalDots,
             theme: theme
         )
+    }
+
+    private func displayBarPct(for metric: MenubarData.MetricData?) -> Double? {
+        guard let metric, let pct = metric.pct else { return nil }
+        if metric.isRemaining == true {
+            return max(0, min(1, 1 - pct))
+        }
+        return pct
     }
 
     private func updateDisplay(data: MenubarData) {
@@ -249,8 +289,6 @@ final class ProviderStatusController {
         } else {
             secondaryMenuItem.title = "\(secondaryLabel): no data yet"
         }
-
-        resetMenuItem.title = formatReset(cycle: resolvedWeeklyCycle())
     }
 
     private func formatMetric(label: String, metric: MenubarData.MetricData, pct: Double) -> String {
@@ -268,24 +306,24 @@ final class ProviderStatusController {
         return "\(label): \(pctInt)%  (\(usage))"
     }
 
-    private func formatReset(cycle: MenubarData.WeeklyCycleData?) -> String {
-        guard let resetEpoch = cycle?.resetEpoch else {
-            return "Week reset: unavailable"
-        }
-        let date = Date(timeIntervalSince1970: resetEpoch)
-        let formatter = DateFormatter()
-        formatter.timeZone = TimeZone(identifier: "America/Los_Angeles")
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "EEE MMM d, h:mm a z"
-        return "Week resets: \(formatter.string(from: date))"
-    }
-
     private func resolvedWeeklyCycle() -> MenubarData.WeeklyCycleData? {
         if let cycle = currentData?.weeklyCycle {
-            return cycle
+            return normalizedWeeklyCycle(cycle)
         }
         guard let resetEpoch = readFallbackResetEpoch() else { return nil }
         return buildWeeklyCycle(resetEpoch: resetEpoch)
+    }
+
+    private func normalizedWeeklyCycle(_ cycle: MenubarData.WeeklyCycleData) -> MenubarData.WeeklyCycleData? {
+        guard let resetEpoch = cycle.resetEpoch else { return cycle }
+        let now = Date().timeIntervalSince1970
+        if resetEpoch > now {
+            return cycle
+        }
+
+        let windowsElapsed = floor((now - resetEpoch) / weeklyCycleSeconds) + 1
+        let normalizedResetEpoch = resetEpoch + windowsElapsed * weeklyCycleSeconds
+        return buildWeeklyCycle(resetEpoch: normalizedResetEpoch)
     }
 
     private func readFallbackResetEpoch() -> Double? {
@@ -389,7 +427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ProviderStatusController(
                 dataURL: Self.claudeDataURL,
                 weeklyResetCacheURL: Self.claudeRateLimitCacheURL,
-                openTitle: "Open Claude Dashboard",
+                openTitle: "Open Local Claude Dashboard",
                 fallbackBuildCommand: "npm run build:claude",
                 theme: ProviderTheme(
                     tint: NSColor.systemOrange.withAlphaComponent(0.16),
@@ -397,11 +435,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     primaryDangerColor: .systemRed,
                     secondaryColor: .systemGreen,
                     cycleColor: .black
-                )
+                ),
+                usagePageURL: URL(string: "https://claude.ai/settings/usage")
             ),
             ProviderStatusController(
                 dataURL: Self.codexDataURL,
-                openTitle: "Open Codex Dashboard",
+                openTitle: "Open Local Codex Dashboard",
                 fallbackBuildCommand: "npm run build:codex",
                 theme: ProviderTheme(
                     tint: NSColor.systemBlue.withAlphaComponent(0.16),
@@ -409,18 +448,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     primaryDangerColor: .systemRed,
                     secondaryColor: .systemTeal,
                     cycleColor: .black
-                )
+                ),
+                usagePageURL: URL(string: "https://chatgpt.com/codex/settings/usage")
             )
         ]
 
         buildMenu()
         refreshAll()
+        refreshTimer?.invalidate()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             self?.refreshAll()
         }
     }
 
     private func buildMenu() {
+        if let existingStatusItem = statusItem {
+            NSStatusBar.system.removeStatusItem(existingStatusItem)
+            statusItem = nil
+        }
+
         let barW: CGFloat = 60
         statusItem = NSStatusBar.system.statusItem(withLength: barW + 4)
 
@@ -435,6 +481,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for controller in controllers {
             controller.install(into: menu, target: self)
         }
+
+        let versionItem = NSMenuItem(title: "Version: \(AppVersion.current)", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+
+        menu.addItem(.separator())
 
         let refreshItem = NSMenuItem(title: "Refresh Now", action: #selector(refreshNow), keyEquivalent: "r")
         refreshItem.target = self
@@ -474,6 +526,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openDashboardFromMenuItem(_ sender: NSMenuItem) {
         guard let controller = sender.representedObject as? ProviderStatusController else { return }
         controller.openDashboard()
+    }
+
+    @objc func openUsagePageFromMenuItem(_ sender: NSMenuItem) {
+        guard let controller = sender.representedObject as? ProviderStatusController else { return }
+        controller.openUsagePage()
     }
 }
 
