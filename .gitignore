@@ -3,3 +3,6 @@ claude/data/data.js
 codex/data/data.js
 .env
 .claude/settings.local.json
+.build-cache/
+menubar/.build/
+mockups/
