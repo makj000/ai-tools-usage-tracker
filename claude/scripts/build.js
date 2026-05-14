@@ -1049,9 +1049,18 @@ function maybeCleanup(oldFiles) {
 function writeMenubarJson(wu, totals) {
   try {
     const rateLimits = readStatuslineRateLimits();
-    const fiveHourUsedPct = rateLimits?.five_hour?.used_percentage;
-    const sevenDayUsedPct = rateLimits?.seven_day?.used_percentage;
-    const weeklyResetEpoch = rateLimits?.seven_day?.resets_at ?? null;
+    // Treat cached pct as stale once the window's resets_at is in the past:
+    // Claude Code repopulates this cache only on its next API call, so after a
+    // window rollover the pct lingers at the previous (often near-full) value
+    // until traffic resumes.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const fiveHourResetsAt = rateLimits?.five_hour?.resets_at;
+    const sevenDayResetsAt = rateLimits?.seven_day?.resets_at;
+    const fiveHourFresh = typeof fiveHourResetsAt === "number" && fiveHourResetsAt > nowSec;
+    const sevenDayFresh = typeof sevenDayResetsAt === "number" && sevenDayResetsAt > nowSec;
+    const fiveHourUsedPct = fiveHourFresh ? rateLimits?.five_hour?.used_percentage : undefined;
+    const sevenDayUsedPct = sevenDayFresh ? rateLimits?.seven_day?.used_percentage : undefined;
+    const weeklyResetEpoch = sevenDayFresh ? sevenDayResetsAt : null;
     const windowMetric = typeof fiveHourUsedPct === "number" ? {
       usage: fiveHourUsedPct,
       ceiling: 100,
