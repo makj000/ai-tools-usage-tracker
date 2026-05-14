@@ -80,10 +80,6 @@ struct StatuslineRateLimitCache: Codable {
 
 struct ProviderTheme {
     let tint: NSColor
-    let primaryColor: NSColor
-    let primaryDangerColor: NSColor
-    let secondaryColor: NSColor
-    let cycleColor: NSColor
 }
 
 private let weeklyCycleSeconds: Double = 7 * 24 * 60 * 60
@@ -111,7 +107,7 @@ final class CombinedBarView: NSView {
 
     private func drawProvider(x: CGFloat, width: CGFloat, provider: ProviderBars) {
         let bgRect = NSRect(x: x, y: 1, width: width, height: bounds.height - 2)
-        NSColor(calibratedWhite: 0.9, alpha: 1).setFill()
+        provider.theme.tint.setFill()
         NSBezierPath(roundedRect: bgRect, xRadius: 4, yRadius: 4).fill()
 
         let inset: CGFloat = 2
@@ -126,16 +122,14 @@ final class CombinedBarView: NSView {
         let bottomBarY = hasCycle ? (baseY + dotSize + cycleGap) : baseY
         let topBarY = bottomBarY + barH + barGap
 
-        NSColor.tertiaryLabelColor.withAlphaComponent(0.22).setFill()
+        NSColor.white.withAlphaComponent(0.96).setFill()
         fill(x: x + inset, y: topBarY, w: barWidth, h: barH)
         fill(x: x + inset, y: bottomBarY, w: barWidth, h: barH)
 
-        let topIsDanger = provider.topIsRemaining ? provider.topPct <= 0.1 : provider.topPct >= 0.9
-        let topColor = topIsDanger ? provider.theme.primaryDangerColor : provider.theme.primaryColor
-        topColor.setFill()
+        NSColor.black.withAlphaComponent(0.92).setFill()
         fill(x: x + inset, y: topBarY, w: barWidth * min(provider.topPct, 1), h: barH)
 
-        provider.theme.secondaryColor.setFill()
+        NSColor.black.withAlphaComponent(0.92).setFill()
         fill(x: x + inset, y: bottomBarY, w: barWidth * min(provider.bottomPct, 1), h: barH)
 
         if hasCycle {
@@ -430,11 +424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 openTitle: "Open Local Claude Dashboard",
                 fallbackBuildCommand: "npm run build:claude",
                 theme: ProviderTheme(
-                    tint: NSColor.systemOrange.withAlphaComponent(0.16),
-                    primaryColor: .systemOrange,
-                    primaryDangerColor: .systemRed,
-                    secondaryColor: .systemGreen,
-                    cycleColor: .black
+                    tint: NSColor.systemOrange.withAlphaComponent(0.74)
                 ),
                 usagePageURL: URL(string: "https://claude.ai/settings/usage")
             ),
@@ -443,11 +433,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 openTitle: "Open Local Codex Dashboard",
                 fallbackBuildCommand: "npm run build:codex",
                 theme: ProviderTheme(
-                    tint: NSColor.systemBlue.withAlphaComponent(0.16),
-                    primaryColor: .systemBlue,
-                    primaryDangerColor: .systemRed,
-                    secondaryColor: .systemTeal,
-                    cycleColor: .black
+                    tint: NSColor.systemBlue.withAlphaComponent(0.72)
                 ),
                 usagePageURL: URL(string: "https://chatgpt.com/codex/settings/usage")
             )
