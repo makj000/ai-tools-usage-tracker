@@ -42,6 +42,7 @@ struct MenubarData: Codable {
         let usageDisplay: String?
         let ceilingDisplay: String?
         let detail: String?
+        let startEpoch: Double?
         let endEpoch: Double?
         let isRemaining: Bool?
     }
@@ -85,10 +86,13 @@ struct ProviderTheme {
 private let weeklyCycleSeconds: Double = 7 * 24 * 60 * 60
 
 final class CombinedBarView: NSView {
+    static let windowTimeSegments: Int = 15
+
     struct ProviderBars {
         let topPct: CGFloat
         let bottomPct: CGFloat
         let topIsRemaining: Bool
+        let windowTimePct: CGFloat?
         let cycleActiveDots: Int
         let cycleTotalDots: Int
         let theme: ProviderTheme
@@ -115,12 +119,18 @@ final class CombinedBarView: NSView {
         let barGap: CGFloat = 2
         let cycleGap: CGFloat = 1.5
         let dotSize: CGFloat = 2.4
+        let timeRowH: CGFloat = 3.0
+        let timeRowGap: CGFloat = 1.0
         let hasCycle = provider.cycleTotalDots > 0
-        let totalH = hasCycle ? (barH * 2 + barGap + cycleGap + dotSize) : (barH * 2 + barGap)
+        let hasTimeRow = provider.windowTimePct != nil
+        var totalH = barH * 2 + barGap
+        if hasCycle { totalH += cycleGap + dotSize }
+        if hasTimeRow { totalH += timeRowGap + timeRowH }
         let baseY = (bounds.height - totalH) / 2
         let barWidth = max(width - inset * 2, 0)
         let bottomBarY = hasCycle ? (baseY + dotSize + cycleGap) : baseY
-        let topBarY = bottomBarY + barH + barGap
+        let timeRowY = hasTimeRow ? (bottomBarY + barH + barGap) : bottomBarY
+        let topBarY = hasTimeRow ? (timeRowY + timeRowH + timeRowGap) : (bottomBarY + barH + barGap)
 
         NSColor.white.withAlphaComponent(0.96).setFill()
         fill(x: x + inset, y: topBarY, w: barWidth, h: barH)
@@ -132,6 +142,18 @@ final class CombinedBarView: NSView {
         NSColor.black.withAlphaComponent(0.92).setFill()
         fill(x: x + inset, y: bottomBarY, w: barWidth * min(provider.bottomPct, 1), h: barH)
 
+        if hasTimeRow, let pct = provider.windowTimePct {
+            NSColor.white.withAlphaComponent(0.96).setFill()
+            fill(x: x + inset, y: timeRowY, w: barWidth, h: timeRowH)
+            drawTimeSquares(
+                x: x + inset,
+                y: timeRowY,
+                width: barWidth,
+                height: timeRowH,
+                pct: pct
+            )
+        }
+
         if hasCycle {
             NSColor.white.withAlphaComponent(0.96).setFill()
             fill(x: x + inset, y: baseY, w: barWidth, h: dotSize)
@@ -142,6 +164,22 @@ final class CombinedBarView: NSView {
                 provider: provider,
                 dotSize: dotSize
             )
+        }
+    }
+
+    private func drawTimeSquares(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat, pct: CGFloat) {
+        let total = Self.windowTimeSegments
+        guard total > 0, width > 0 else { return }
+        let segWidth = max(width / CGFloat(total) - 0.3, 0.8)
+        let spacing = total > 1 ? (width - segWidth) / CGFloat(total - 1) : 0
+        let filledCount = max(0, min(total, Int((pct * CGFloat(total)).rounded(.toNearestOrEven))))
+        for idx in 0..<total {
+            let rect = NSRect(x: x + CGFloat(idx) * spacing, y: y, width: segWidth, height: height)
+            let color = idx < filledCount
+                ? NSColor.black.withAlphaComponent(0.92)
+                : NSColor.black.withAlphaComponent(0.4)
+            color.setFill()
+            NSBezierPath(rect: rect).fill()
         }
     }
 
@@ -245,7 +283,8 @@ final class ProviderStatusController {
     }
 
     func barState() -> CombinedBarView.ProviderBars {
-        let primaryPct = CGFloat(displayBarPct(for: currentData?.resolvedPrimary) ?? 0)
+        let primary = currentData?.resolvedPrimary
+        let primaryPct = CGFloat(displayBarPct(for: primary) ?? 0)
         let secondaryPct = CGFloat(displayBarPct(for: currentData?.resolvedSecondary) ?? 0)
         let cycle = resolvedWeeklyCycle()
         let cycleTotalDots = cycle?.totalDots ?? 0
@@ -253,11 +292,21 @@ final class ProviderStatusController {
         return CombinedBarView.ProviderBars(
             topPct: primaryPct,
             bottomPct: secondaryPct,
-            topIsRemaining: currentData?.resolvedPrimary?.isRemaining ?? false,
+            topIsRemaining: primary?.isRemaining ?? false,
+            windowTimePct: windowTimePct(for: primary),
             cycleActiveDots: cycleActiveDots,
             cycleTotalDots: cycleTotalDots,
             theme: theme
         )
+    }
+
+    private func windowTimePct(for metric: MenubarData.MetricData?) -> CGFloat? {
+        guard let metric, let start = metric.startEpoch, let end = metric.endEpoch, end > start else {
+            return nil
+        }
+        let now = Date().timeIntervalSince1970
+        let pct = (now - start) / (end - start)
+        return CGFloat(max(0, min(1, pct)))
     }
 
     private func displayBarPct(for metric: MenubarData.MetricData?) -> Double? {

@@ -1068,7 +1068,8 @@ function writeMenubarJson(wu, totals) {
       usageDisplay: `${Math.round(fiveHourUsedPct)}% used`,
       ceilingDisplay: null,
       detail: formatResetDetail(rateLimits?.five_hour?.resets_at),
-      endEpoch: rateLimits?.five_hour?.resets_at ?? null,
+      startEpoch: typeof fiveHourResetsAt === "number" ? fiveHourResetsAt - 5 * 3600 : null,
+      endEpoch: fiveHourResetsAt ?? null,
       isRemaining: false,
     } : wu ? {
       usage: +(wu.currentUsage || 0).toFixed(4),
@@ -1076,7 +1077,8 @@ function writeMenubarJson(wu, totals) {
       pct: wu.pctUsed != null ? +Math.min(wu.pctUsed, 1).toFixed(4) : null,
       usageDisplay: `$${(wu.currentUsage || 0).toFixed(2)}`,
       ceilingDisplay: wu.medianCeiling != null ? `$${wu.medianCeiling.toFixed(2)}` : null,
-      endEpoch: wu.windowEndEpoch || null,
+      startEpoch: wu.windowStartEpoch ? Math.floor(wu.windowStartEpoch / 1000) : null,
+      endEpoch: wu.windowEndEpoch ? Math.floor(wu.windowEndEpoch / 1000) : null,
       isRemaining: false,
     } : null;
     const weeklyMetric = typeof sevenDayUsedPct === "number" ? {

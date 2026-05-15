@@ -370,6 +370,9 @@ function buildMenubarData(daily) {
       usageDisplay: hasPrimaryRateLimit ? `${Math.round(primaryRemainingPct * 100)}% left` : `${compactNumber(todayUsage)} tok`,
       ceilingDisplay: hasPrimaryRateLimit ? null : `${compactNumber(dailyCeiling)} tok`,
       detail: hasPrimaryRateLimit ? formatResetDetail(rateLimits?.primary?.resets_at) : `${todayPromptCount} prompts`,
+      startEpoch: hasPrimaryRateLimit && Number.isInteger(rateLimits?.primary?.resets_at)
+        ? rateLimits.primary.resets_at - 5 * 3600
+        : null,
       endEpoch: Number.isInteger(rateLimits?.primary?.resets_at) ? rateLimits.primary.resets_at : null,
       isRemaining: hasPrimaryRateLimit || null,
     },
