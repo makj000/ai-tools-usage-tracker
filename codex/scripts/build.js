@@ -15,6 +15,7 @@ const DAILY_CEILING_DAYS = 14;
 const WEEKLY_SERIES_DAYS = 56;
 const WEEKLY_CYCLE_DAYS = 7;
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), ".codex", "sessions");
+const MENUBAR_ONLY_FLAG = "--menubar-only";
 
 function readJsonl(filePath) {
   if (!fs.existsSync(filePath)) return [];
@@ -403,7 +404,7 @@ function writeDataFile(data) {
   fs.writeFileSync(OUTPUT, `window.TRACKER_DATA = ${JSON.stringify(data)};\n`);
 }
 
-function main() {
+function loadTrackerData() {
   const homeDir = os.homedir();
   const rawThreads = execSql(
     STATE_DB,
@@ -426,9 +427,16 @@ function main() {
     daily,
     models,
   };
-  writeDataFile(data);
+  return { data, daily, history, threads };
+}
+
+function main(argv = process.argv.slice(2)) {
+  const menubarOnly = argv.includes(MENUBAR_ONLY_FLAG);
+  const { data, daily, history, threads } = loadTrackerData();
+  if (!menubarOnly) writeDataFile(data);
   writeMenubarJson(buildMenubarData(daily));
-  console.log(`[codex build] wrote ${OUTPUT} with ${threads.length} threads and ${history.length} prompts`);
+  const target = menubarOnly ? MENUBAR_JSON_PATH : OUTPUT;
+  console.log(`[codex build] wrote ${target} with ${threads.length} threads and ${history.length} prompts`);
 }
 
 if (require.main === module) {
@@ -445,5 +453,6 @@ module.exports = {
   formatProjectLabel,
   groupPromptsBySession,
   laDate,
+  loadTrackerData,
   shortProjectName,
 };
