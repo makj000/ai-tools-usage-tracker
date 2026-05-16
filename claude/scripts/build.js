@@ -925,10 +925,10 @@ function buildWindowUsage(coworkSessions) {
 
   return {
     resetHours,
-    windowStartEpoch: currentWin ? currentWin.startEpoch : null,
-    windowEndEpoch: currentWin ? currentWin.endEpoch : null,
-    windowStartTs: currentWin ? new Date(currentWin.startEpoch).toISOString() : null,
-    windowEndTs: currentWin ? new Date(currentWin.endEpoch).toISOString() : null,
+    windowStartEpoch: isCurrentActive ? currentWin.startEpoch : null,
+    windowEndEpoch: isCurrentActive ? currentWin.endEpoch : null,
+    windowStartTs: isCurrentActive ? new Date(currentWin.startEpoch).toISOString() : null,
+    windowEndTs: isCurrentActive ? new Date(currentWin.endEpoch).toISOString() : null,
     windowStartHour: currentWin ? toLADate(new Date(currentWin.startEpoch).toISOString()).hour : null,
     // Per-window
     currentUsage,

@@ -351,6 +351,7 @@ function buildMenubarData(daily) {
   const weeklyUsage = dailySeries.slice(-7).reduce((sum, entry) => sum + (entry.tokens || 0), 0);
   const weeklyPromptCount = dailySeries.slice(-7).reduce((sum, entry) => sum + (entry.prompts || 0), 0);
   const weeklyCeiling = Math.max(1, ...rollingSums(dailySeries, 7, "tokens"));
+  const nowSec = Math.floor(Date.now() / 1000);
   const primaryUsedPercent = rateLimits?.primary?.used_percent;
   const secondaryUsedPercent = rateLimits?.secondary?.used_percent;
   const hasPrimaryRateLimit = typeof primaryUsedPercent === "number";
@@ -371,10 +372,10 @@ function buildMenubarData(daily) {
       usageDisplay: hasPrimaryRateLimit ? `${Math.round(primaryRemainingPct * 100)}% left` : `${compactNumber(todayUsage)} tok`,
       ceilingDisplay: hasPrimaryRateLimit ? null : `${compactNumber(dailyCeiling)} tok`,
       detail: hasPrimaryRateLimit ? formatResetDetail(rateLimits?.primary?.resets_at) : `${todayPromptCount} prompts`,
-      startEpoch: hasPrimaryRateLimit && Number.isInteger(rateLimits?.primary?.resets_at)
+      startEpoch: hasPrimaryRateLimit && Number.isInteger(rateLimits?.primary?.resets_at) && rateLimits.primary.resets_at > nowSec
         ? rateLimits.primary.resets_at - 5 * 3600
         : null,
-      endEpoch: Number.isInteger(rateLimits?.primary?.resets_at) ? rateLimits.primary.resets_at : null,
+      endEpoch: Number.isInteger(rateLimits?.primary?.resets_at) && rateLimits.primary.resets_at > nowSec ? rateLimits.primary.resets_at : null,
       isRemaining: hasPrimaryRateLimit || null,
     },
     secondary: {
@@ -384,7 +385,7 @@ function buildMenubarData(daily) {
       usageDisplay: hasSecondaryRateLimit ? `${Math.round(secondaryRemainingPct * 100)}% left` : `${compactNumber(weeklyUsage)} tok`,
       ceilingDisplay: hasSecondaryRateLimit ? null : `${compactNumber(weeklyCeiling)} tok`,
       detail: hasSecondaryRateLimit ? formatResetDetail(rateLimits?.secondary?.resets_at) : `${weeklyPromptCount} prompts`,
-      endEpoch: Number.isInteger(rateLimits?.secondary?.resets_at) ? rateLimits.secondary.resets_at : null,
+      endEpoch: Number.isInteger(rateLimits?.secondary?.resets_at) && rateLimits.secondary.resets_at > nowSec ? rateLimits.secondary.resets_at : null,
       isRemaining: hasSecondaryRateLimit || null,
     },
     weeklyCycle: buildWeeklyCycle(todayDate, rateLimits?.secondary?.resets_at),
