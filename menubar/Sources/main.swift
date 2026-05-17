@@ -543,6 +543,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "/usr/local/bin/node",
     ]
 
+    func applicationWillTerminate(_ notification: Notification) {
+        if let item = statusItem {
+            NSStatusBar.system.removeStatusItem(item)
+            statusItem = nil
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         controllers = [
             ProviderStatusController(
@@ -565,7 +572,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 theme: ProviderTheme(
                     tint: NSColor.systemBlue.withAlphaComponent(0.72)
                 ),
-                usagePageURL: URL(string: "https://chatgpt.com/codex/settings/usage")
+                usagePageURL: URL(string: "https://chatgpt.com/codex/settings/usage"),
+                apiCreditURL: URL(string: "https://platform.openai.com/home")
             )
         ]
 
