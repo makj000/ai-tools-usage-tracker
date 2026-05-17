@@ -391,7 +391,11 @@ function buildMenubarData(daily) {
       pct: primaryRemainingPct,
       usageDisplay: hasPrimaryRateLimit ? `${Math.round(primaryRemainingPct * 100)}% left` : `${compactNumber(todayUsage)} tok`,
       ceilingDisplay: hasPrimaryRateLimit ? null : `${compactNumber(dailyCeiling)} tok`,
-      detail: hasPrimaryRateLimit ? formatResetDetail(rateLimits?.primary?.resets_at) : `${todayPromptCount} prompts`,
+      detail: hasPrimaryRateLimit
+        ? formatResetDetail(rateLimits?.primary?.resets_at)
+        : projectedWindowEnd !== null
+          ? formatResetDetail(projectedWindowEnd)
+          : `${todayPromptCount} prompts`,
       startEpoch: projectedWindowStart,
       endEpoch: projectedWindowEnd,
       isRemaining: hasPrimaryRateLimit || null,
