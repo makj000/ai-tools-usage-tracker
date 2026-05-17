@@ -354,8 +354,10 @@ function buildMenubarData(daily) {
   const nowSec = Math.floor(Date.now() / 1000);
   const primaryUsedPercent = rateLimits?.primary?.used_percent;
   const secondaryUsedPercent = rateLimits?.secondary?.used_percent;
-  const hasPrimaryRateLimit = typeof primaryUsedPercent === "number";
-  const hasSecondaryRateLimit = typeof secondaryUsedPercent === "number";
+  const primaryResetFresh = Number.isInteger(rateLimits?.primary?.resets_at) && rateLimits.primary.resets_at > nowSec;
+  const secondaryResetFresh = Number.isInteger(rateLimits?.secondary?.resets_at) && rateLimits.secondary.resets_at > nowSec;
+  const hasPrimaryRateLimit = typeof primaryUsedPercent === "number" && primaryResetFresh;
+  const hasSecondaryRateLimit = typeof secondaryUsedPercent === "number" && secondaryResetFresh;
   const primaryRemainingPct = hasPrimaryRateLimit ? Math.max(0, Math.min(1, 1 - primaryUsedPercent / 100)) : Math.min(todayUsage / dailyCeiling, 1);
   const secondaryRemainingPct = hasSecondaryRateLimit ? Math.max(0, Math.min(1, 1 - secondaryUsedPercent / 100)) : Math.min(weeklyUsage / weeklyCeiling, 1);
 

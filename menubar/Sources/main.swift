@@ -342,6 +342,7 @@ final class ProviderStatusController {
             return nil
         }
         let now = Date().timeIntervalSince1970
+        guard end > now else { return nil }  // window already reset — don't show stale bar
         let pct = (now - start) / (end - start)
         return CGFloat(max(0, min(1, pct)))
     }
@@ -395,10 +396,12 @@ final class ProviderStatusController {
     private func formatMetric(label: String, metric: MenubarData.MetricData, pct: Double) -> String {
         let pctInt = Int((pct * 100).rounded())
         let usage = metric.usageDisplay ?? String(format: "%.2f", metric.usage)
+        let now = Date().timeIntervalSince1970
         let resolvedDetail: String?
-        if let d = metric.detail, !d.isEmpty {
+        if let d = metric.detail, !d.isEmpty,
+           metric.endEpoch == nil || (metric.endEpoch ?? 0) > now {
             resolvedDetail = d
-        } else if let end = metric.endEpoch, end > Date().timeIntervalSince1970 {
+        } else if let end = metric.endEpoch, end > now {
             resolvedDetail = formatEpochAsResets(end)
         } else {
             resolvedDetail = nil
@@ -523,6 +526,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var barView: CombinedBarView!
     private var controllers: [ProviderStatusController] = []
     private var refreshTimer: Timer?
+    private var barRedrawTimer: Timer?
     private let buildQueue = DispatchQueue(label: "agentic-tool-usage-tracker.codex-build")
     private var codexBuildInFlight = false
 
@@ -582,6 +586,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer?.invalidate()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             self?.refreshAll()
+        }
+        barRedrawTimer?.invalidate()
+        barRedrawTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.barView.needsDisplay = true
         }
     }
 
