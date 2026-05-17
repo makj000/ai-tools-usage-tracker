@@ -34,6 +34,8 @@ struct MenubarData: Codable {
     let window: MetricData?
     let weekly: MetricData?
     let weeklyCycle: WeeklyCycleData?
+    let extraSpent: Double?
+    let extraPurchased: Double?
 
     struct MetricData: Codable {
         let usage: Double
@@ -212,28 +214,32 @@ final class ProviderStatusController {
     let fallbackBuildCommand: String
     let theme: ProviderTheme
     let usagePageURL: URL?
+    let apiCreditURL: URL?
 
     private let openTitle: String
+    private let sectionTitle: String
     private var primaryMenuItem: NSMenuItem!
     private var secondaryMenuItem: NSMenuItem!
     private var openUsageMenuItem: NSMenuItem!
+    private var extraCreditMenuItem: NSMenuItem?
+    private var apiCreditMenuItem: NSMenuItem?
     private var openMenuItem: NSMenuItem!
     private var lastReportPath: String?
     private var currentData: MenubarData?
 
-    init(dataURL: URL, weeklyResetCacheURL: URL? = nil, openTitle: String, fallbackBuildCommand: String, theme: ProviderTheme, usagePageURL: URL? = nil) {
+    init(dataURL: URL, weeklyResetCacheURL: URL? = nil, openTitle: String, sectionTitle: String, fallbackBuildCommand: String, theme: ProviderTheme, usagePageURL: URL? = nil, apiCreditURL: URL? = nil) {
         self.dataURL = dataURL
         self.weeklyResetCacheURL = weeklyResetCacheURL
         self.openTitle = openTitle
+        self.sectionTitle = sectionTitle
         self.fallbackBuildCommand = fallbackBuildCommand
         self.theme = theme
         self.usagePageURL = usagePageURL
+        self.apiCreditURL = apiCreditURL
     }
 
     func install(into menu: NSMenu, target: AppDelegate) {
-        let titleItem = NSMenuItem(title: openTitle.replacingOccurrences(of: "Open ", with: "").replacingOccurrences(of: " Dashboard", with: ""), action: nil, keyEquivalent: "")
-        titleItem.isEnabled = false
-        menu.addItem(titleItem)
+        menu.addItem(makeSectionHeaderItem(title: sectionTitle))
 
         primaryMenuItem = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
         primaryMenuItem.isEnabled = false
@@ -254,7 +260,33 @@ final class ProviderStatusController {
         openUsageMenuItem.isEnabled = usagePageURL != nil
         menu.addItem(openUsageMenuItem)
 
+        let ecItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        ecItem.isEnabled = false
+        ecItem.isHidden = true
+        extraCreditMenuItem = ecItem
+        menu.addItem(ecItem)
+
+        if apiCreditURL != nil {
+            let item = NSMenuItem(title: "API Credit", action: #selector(AppDelegate.openApiCreditFromMenuItem(_:)), keyEquivalent: "")
+            item.target = target
+            item.representedObject = self
+            apiCreditMenuItem = item
+            menu.addItem(item)
+        }
+
         menu.addItem(.separator())
+    }
+
+    private func makeSectionHeaderItem(title: String) -> NSMenuItem {
+        let item = NSMenuItem()
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 20))
+        let label = NSTextField(labelWithString: title)
+        label.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        label.textColor = NSColor.labelColor
+        label.frame = NSRect(x: 14, y: 4, width: 230, height: 14)
+        container.addSubview(label)
+        item.view = container
+        return item
     }
 
     func openDashboard() {
@@ -265,6 +297,11 @@ final class ProviderStatusController {
     func openUsagePage() {
         guard let usagePageURL else { return }
         NSWorkspace.shared.open(usagePageURL)
+    }
+
+    func openApiCredit() {
+        guard let apiCreditURL else { return }
+        NSWorkspace.shared.open(apiCreditURL)
     }
 
     func refresh() {
@@ -332,12 +369,41 @@ final class ProviderStatusController {
         } else {
             secondaryMenuItem.title = "\(secondaryLabel): no data yet"
         }
+
+        if let spent = data.extraSpent {
+            if let purchased = data.extraPurchased {
+                let balance = max(0, purchased - spent)
+                extraCreditMenuItem?.title = "    Extra credit: $\(String(format: "%.2f", balance)) left of $\(String(format: "%.2f", purchased))"
+            } else {
+                extraCreditMenuItem?.title = "    Extra credit: $\(String(format: "%.2f", spent)) spent"
+            }
+            extraCreditMenuItem?.isHidden = false
+        } else {
+            extraCreditMenuItem?.isHidden = true
+        }
+    }
+
+    private func formatEpochAsResets(_ epoch: Double) -> String {
+        let date = Date(timeIntervalSince1970: epoch)
+        let formatter = DateFormatter()
+        formatter.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MMM d, h:mm a zzz"
+        return "resets \(formatter.string(from: date))"
     }
 
     private func formatMetric(label: String, metric: MenubarData.MetricData, pct: Double) -> String {
         let pctInt = Int((pct * 100).rounded())
         let usage = metric.usageDisplay ?? String(format: "%.2f", metric.usage)
-        if let detail = metric.detail, !detail.isEmpty {
+        let resolvedDetail: String?
+        if let d = metric.detail, !d.isEmpty {
+            resolvedDetail = d
+        } else if let end = metric.endEpoch, end > Date().timeIntervalSince1970 {
+            resolvedDetail = formatEpochAsResets(end)
+        } else {
+            resolvedDetail = nil
+        }
+        if let detail = resolvedDetail {
             if let ceiling = metric.ceilingDisplay {
                 return "\(label): \(pctInt)%  (\(usage) / \(ceiling), \(detail))"
             }
@@ -482,16 +548,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ProviderStatusController(
                 dataURL: Self.claudeDataURL,
                 weeklyResetCacheURL: Self.claudeRateLimitCacheURL,
-                openTitle: "Open Local Claude Dashboard",
+                openTitle: "Open Claude Dashboard",
+                sectionTitle: "Claude",
                 fallbackBuildCommand: "npm run build:claude",
                 theme: ProviderTheme(
                     tint: NSColor.systemOrange.withAlphaComponent(0.74)
                 ),
-                usagePageURL: URL(string: "https://claude.ai/settings/usage")
+                usagePageURL: URL(string: "https://claude.ai/settings/usage"),
+                apiCreditURL: URL(string: "https://platform.claude.com/dashboard")
             ),
             ProviderStatusController(
                 dataURL: Self.codexDataURL,
-                openTitle: "Open Local Codex Dashboard",
+                openTitle: "Open Codex Dashboard",
+                sectionTitle: "Codex",
                 fallbackBuildCommand: "npm run build:codex",
                 theme: ProviderTheme(
                     tint: NSColor.systemBlue.withAlphaComponent(0.72)
@@ -605,11 +674,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func restartApp() {
-        let exe = URL(fileURLWithPath: CommandLine.arguments[0])
-        let task = Process()
-        task.executableURL = exe
-        task.arguments = []
-        try? task.run()
+        // launchd (KeepAlive: true) restarts the process automatically after termination
         NSApp.terminate(nil)
     }
 
@@ -621,6 +686,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openUsagePageFromMenuItem(_ sender: NSMenuItem) {
         guard let controller = sender.representedObject as? ProviderStatusController else { return }
         controller.openUsagePage()
+    }
+
+    @objc func openApiCreditFromMenuItem(_ sender: NSMenuItem) {
+        guard let controller = sender.representedObject as? ProviderStatusController else { return }
+        controller.openApiCredit()
     }
 }
 
