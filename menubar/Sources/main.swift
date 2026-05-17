@@ -342,7 +342,6 @@ final class ProviderStatusController {
             return nil
         }
         let now = Date().timeIntervalSince1970
-        guard end > now else { return nil }  // window already reset — don't show stale bar
         let pct = (now - start) / (end - start)
         return CGFloat(max(0, min(1, pct)))
     }

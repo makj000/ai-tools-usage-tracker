@@ -361,6 +361,24 @@ function buildMenubarData(daily) {
   const primaryRemainingPct = hasPrimaryRateLimit ? Math.max(0, Math.min(1, 1 - primaryUsedPercent / 100)) : Math.min(todayUsage / dailyCeiling, 1);
   const secondaryRemainingPct = hasSecondaryRateLimit ? Math.max(0, Math.min(1, 1 - secondaryUsedPercent / 100)) : Math.min(weeklyUsage / weeklyCeiling, 1);
 
+  // Always compute a projected 5h window for the time-progress bar.
+  // If the last known reset is still in the future, use it directly.
+  // If it has expired, roll it forward by however many 5h intervals have elapsed.
+  const WINDOW_SEC = 5 * 3600;
+  const lastPrimaryReset = Number.isInteger(rateLimits?.primary?.resets_at) ? rateLimits.primary.resets_at : null;
+  let projectedWindowStart = null;
+  let projectedWindowEnd = null;
+  if (lastPrimaryReset !== null) {
+    if (lastPrimaryReset > nowSec) {
+      projectedWindowStart = lastPrimaryReset - WINDOW_SEC;
+      projectedWindowEnd = lastPrimaryReset;
+    } else {
+      const windowsElapsed = Math.floor((nowSec - lastPrimaryReset) / WINDOW_SEC) + 1;
+      projectedWindowEnd = lastPrimaryReset + windowsElapsed * WINDOW_SEC;
+      projectedWindowStart = projectedWindowEnd - WINDOW_SEC;
+    }
+  }
+
   return {
     updatedAt: new Date().toISOString(),
     title: "Codex",
@@ -374,10 +392,8 @@ function buildMenubarData(daily) {
       usageDisplay: hasPrimaryRateLimit ? `${Math.round(primaryRemainingPct * 100)}% left` : `${compactNumber(todayUsage)} tok`,
       ceilingDisplay: hasPrimaryRateLimit ? null : `${compactNumber(dailyCeiling)} tok`,
       detail: hasPrimaryRateLimit ? formatResetDetail(rateLimits?.primary?.resets_at) : `${todayPromptCount} prompts`,
-      startEpoch: hasPrimaryRateLimit && Number.isInteger(rateLimits?.primary?.resets_at) && rateLimits.primary.resets_at > nowSec
-        ? rateLimits.primary.resets_at - 5 * 3600
-        : null,
-      endEpoch: Number.isInteger(rateLimits?.primary?.resets_at) && rateLimits.primary.resets_at > nowSec ? rateLimits.primary.resets_at : null,
+      startEpoch: projectedWindowStart,
+      endEpoch: projectedWindowEnd,
       isRemaining: hasPrimaryRateLimit || null,
     },
     secondary: {
