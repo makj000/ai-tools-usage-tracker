@@ -4,7 +4,7 @@
     {
       "name": "claude-tracker",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "3737"],
+      "runtimeArgs": ["-m", "http.server", "3737", "--bind", "127.0.0.1"],
       "port": 3737,
       "autoPort": false
     }
