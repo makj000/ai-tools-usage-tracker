@@ -83,7 +83,7 @@ Open `claude/report.html` or `codex/report.html` in any browser after building.
 
 ## Configuration
 
-Create `claude/data/config.json` (optional) to tune estimates:
+Copy `claude/data/config.example.json` to `claude/data/config.json` (optional) to tune estimates:
 
 ```json
 {

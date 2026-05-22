@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.agentic-tool-usage-tracker.menubar</string>
+  <string>com.ai-tools-usage-tracker.menubar</string>
 
   <key>ProgramArguments</key>
   <array>

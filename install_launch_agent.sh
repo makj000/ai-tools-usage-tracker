@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-LABEL="com.agentic-tool-usage-tracker.menubar"
-PLIST_TEMPLATE="$ROOT/com.agentic-tool-usage-tracker.menubar.plist"
+LABEL="com.ai-tools-usage-tracker.menubar"
+PLIST_TEMPLATE="$ROOT/com.ai-tools-usage-tracker.menubar.plist"
 TARGET_DIR="$HOME/Library/LaunchAgents"
 TARGET_PLIST="$TARGET_DIR/$LABEL.plist"
 GUI_DOMAIN="gui/$(id -u)"

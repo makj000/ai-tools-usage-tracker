@@ -1,4 +1,5 @@
 node_modules/
+claude/data/config.json
 claude/data/data.js
 claude/data/events.jsonl
 claude/data/events-*.jsonl
