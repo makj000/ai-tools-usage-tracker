@@ -26,8 +26,8 @@ Also includes a native macOS menu bar app showing live usage bars.
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/your-username/agentic-tool-usage-tracker.git
-cd agentic-tool-usage-tracker
+git clone https://github.com/your-username/ai-tools-usage-tracker.git
+cd ai-tools-usage-tracker
 ```
 
 ### 2. Wire up Claude Code hooks
@@ -37,15 +37,15 @@ Add the following to `~/.claude/settings.json` (merge with any existing hooks):
 ```json
 {
   "hooks": {
-    "PreToolUse":      [{"matcher": "", "hooks": [{"type": "command", "command": "python3 /path/to/agentic-tool-usage-tracker/claude/scripts/log_hook.py"}]}],
-    "PostToolUse":     [{"matcher": "", "hooks": [{"type": "command", "command": "python3 /path/to/agentic-tool-usage-tracker/claude/scripts/log_hook.py"}]}],
-    "Notification":    [{"matcher": "", "hooks": [{"type": "command", "command": "python3 /path/to/agentic-tool-usage-tracker/claude/scripts/log_hook.py"}]}],
-    "UserPromptSubmit":[{"matcher": "", "hooks": [{"type": "command", "command": "python3 /path/to/agentic-tool-usage-tracker/claude/scripts/log_hook.py"}]}]
+    "PreToolUse":      [{"matcher": "", "hooks": [{"type": "command", "command": "python3 /path/to/ai-tools-usage-tracker/claude/scripts/log_hook.py"}]}],
+    "PostToolUse":     [{"matcher": "", "hooks": [{"type": "command", "command": "python3 /path/to/ai-tools-usage-tracker/claude/scripts/log_hook.py"}]}],
+    "Notification":    [{"matcher": "", "hooks": [{"type": "command", "command": "python3 /path/to/ai-tools-usage-tracker/claude/scripts/log_hook.py"}]}],
+    "UserPromptSubmit":[{"matcher": "", "hooks": [{"type": "command", "command": "python3 /path/to/ai-tools-usage-tracker/claude/scripts/log_hook.py"}]}]
   }
 }
 ```
 
-Replace `/path/to/agentic-tool-usage-tracker` with the actual path.
+Replace `/path/to/ai-tools-usage-tracker` with the actual path.
 
 ### 3. Build the dashboard data
 
