@@ -3,16 +3,16 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.kma.agentic-tool-usage-tracker-menubar</string>
+  <string>com.agentic-tool-usage-tracker.menubar</string>
 
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string>
-    <string>/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/run_menubar.sh</string>
+    <string>__ROOT__/run_menubar.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/kma/dev/ai-agent/agentic-tool-usage-tracker</string>
+  <string>__ROOT__</string>
 
   <key>RunAtLoad</key>
   <true/>
@@ -21,9 +21,9 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/logs/launchd.stdout.log</string>
+  <string>__ROOT__/logs/launchd.stdout.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/kma/dev/ai-agent/agentic-tool-usage-tracker/logs/launchd.stderr.log</string>
+  <string>__ROOT__/logs/launchd.stderr.log</string>
 </dict>
 </plist>

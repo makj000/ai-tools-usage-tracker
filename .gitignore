@@ -1,8 +1,15 @@
 node_modules/
 claude/data/data.js
+claude/data/events.jsonl
+claude/data/events-*.jsonl
 codex/data/data.js
+codex/data/events.jsonl
+codex/data/events-*.jsonl
 .env
 .claude/settings.local.json
 .build-cache/
 menubar/.build/
 mockups/
+logs/
+restructure.md
+TOKEN_USAGE_TAB_CHECKLIST.md

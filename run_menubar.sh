@@ -1,8 +1,9 @@
 #!/bin/zsh
 set -euo pipefail
 
-ROOT="/Users/kma/dev/ai-agent/agentic-tool-usage-tracker"
-NODE_BIN="/opt/homebrew/bin/node"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+# Override NODE_BIN if node is not at the default Homebrew path
+NODE_BIN="${NODE_BIN:-/opt/homebrew/bin/node}"
 SWIFT_BIN="/usr/bin/swift"
 MENUBAR_BIN="$ROOT/menubar/.build/release/ClaudeMenuBar"
 

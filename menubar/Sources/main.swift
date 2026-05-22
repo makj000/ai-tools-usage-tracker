@@ -529,6 +529,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let buildQueue = DispatchQueue(label: "agentic-tool-usage-tracker.codex-build")
     private var codexBuildInFlight = false
 
+    private var barItemWidth: CGFloat {
+        get {
+            let stored = UserDefaults.standard.double(forKey: "barItemWidth")
+            return stored > 0 ? CGFloat(stored) : NSStatusBar.system.thickness
+        }
+        set { UserDefaults.standard.set(Double(newValue), forKey: "barItemWidth") }
+    }
+
     private static let repoRootURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
         .deletingLastPathComponent()
         .deletingLastPathComponent()
@@ -598,7 +606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem = nil
         }
 
-        let barW: CGFloat = 60
+        let barW: CGFloat = barItemWidth
         statusItem = NSStatusBar.system.statusItem(withLength: barW + 4)
 
         if let btn = statusItem.button {
@@ -627,12 +635,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         restartItem.target = self
         menu.addItem(restartItem)
 
+        menu.addItem(makeWidthSliderItem())
+
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+    }
+
+    private func makeWidthSliderItem() -> NSMenuItem {
+        let item = NSMenuItem()
+        item.isEnabled = true
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 30))
+        let label = NSTextField(labelWithString: "Width")
+        label.frame = NSRect(x: 14, y: 7, width: 40, height: 16)
+        label.font = NSFont.systemFont(ofSize: 12)
+        container.addSubview(label)
+        let slider = NSSlider(value: Double(barItemWidth), minValue: 10, maxValue: 120, target: self, action: #selector(widthSliderChanged(_:)))
+        slider.frame = NSRect(x: 58, y: 7, width: 126, height: 16)
+        slider.isContinuous = true
+        container.addSubview(slider)
+        let valueLabel = NSTextField(labelWithString: "\(Int(barItemWidth))px")
+        valueLabel.frame = NSRect(x: 188, y: 7, width: 38, height: 16)
+        valueLabel.font = NSFont.systemFont(ofSize: 12)
+        valueLabel.tag = 1001
+        container.addSubview(valueLabel)
+        item.view = container
+        return item
+    }
+
+    @objc private func widthSliderChanged(_ sender: NSSlider) {
+        let newWidth = CGFloat(sender.doubleValue.rounded())
+        barItemWidth = newWidth
+        if let valueLabel = sender.superview?.viewWithTag(1001) as? NSTextField {
+            valueLabel.stringValue = "\(Int(newWidth))px"
+        }
+        statusItem.length = newWidth + 4
+        barView.frame = NSRect(x: 2, y: 0, width: newWidth, height: barView.frame.height)
+        barView.needsDisplay = true
     }
 
     private func refreshAll() {
