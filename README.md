@@ -83,11 +83,16 @@ Open `claude/report.html` or `codex/report.html` in any browser after building.
 
 ## Configuration
 
-Copy `claude/data/config.example.json` to `claude/data/config.json` (optional) to tune estimates:
+Copy the example config (optional) to tune estimates:
+
+```bash
+cp claude/data/config.example.json claude/data/config.json
+```
 
 ```json
 {
-  "extraPurchasedSeed": 50,
+  "plan": "pro",
+  "extraPurchasedSeed": null,
   "extraSpentOverride": null,
   "weeklyLimitSeed": null,
   "windowLimitSeed": null
@@ -96,6 +101,7 @@ Copy `claude/data/config.example.json` to `claude/data/config.json` (optional) t
 
 | Field | Description |
 |---|---|
+| `plan` | Your Claude plan: `"pro"`, `"max5x"`, or `"max20x"` — sets default usage ceilings |
 | `extraPurchasedSeed` | Default extra credit purchased (USD), used as browser localStorage fallback |
 | `extraSpentOverride` | Override transcript-derived extra credit spend (USD) |
 | `weeklyLimitSeed` | Override estimated weekly ceiling (USD) |
