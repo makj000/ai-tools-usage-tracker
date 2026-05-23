@@ -2,7 +2,9 @@
 
 A self-hosted dashboard that tracks Claude Code and OpenAI Codex usage, token consumption, and estimated API-equivalent costs. Runs entirely locally — a Python hook logs events, a Node.js build script processes data, and a single HTML file renders everything in the browser.
 
-Also includes a native macOS menu bar app showing live usage bars.
+Also includes a native macOS menu bar app showing live usage bars for both providers.
+
+<img width="1400" alt="Claude Tracker — Overview tab" src="screenshots/claude-overview.png">
 
 ## Features
 
@@ -12,6 +14,22 @@ Also includes a native macOS menu bar app showing live usage bars.
 - Tool usage frequency (Claude Code)
 - Claude Cowork scheduled-task integration
 - Native macOS menu bar widget with usage bars for Claude and Codex
+
+## Screenshots
+
+### Claude Dashboard
+
+<img width="1400" alt="Claude Tracker — Cost &amp; Tokens tab" src="screenshots/claude-cost-tokens.png">
+
+<img width="1400" alt="Claude Tracker — Tool Usage tab" src="screenshots/claude-tool-usage.png">
+
+### Codex Dashboard
+
+<img width="1400" alt="Codex Tracker dashboard" src="screenshots/codex-overview.png">
+
+### Menu Bar
+
+<img width="400" alt="Menu bar app — Claude and Codex usage" src="screenshots/menubar-dropdown.png">
 
 ## Prerequisites
 
