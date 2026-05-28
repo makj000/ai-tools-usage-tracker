@@ -356,9 +356,21 @@ function buildMenubarData(daily) {
   const secondaryUsedPercent = rateLimits?.secondary?.used_percent;
   const primaryResetFresh = Number.isInteger(rateLimits?.primary?.resets_at) && rateLimits.primary.resets_at > nowSec;
   const secondaryResetFresh = Number.isInteger(rateLimits?.secondary?.resets_at) && rateLimits.secondary.resets_at > nowSec;
-  const hasPrimaryRateLimit = typeof primaryUsedPercent === "number" && primaryResetFresh;
-  const hasSecondaryRateLimit = typeof secondaryUsedPercent === "number" && secondaryResetFresh;
-  const primaryRemainingPct = hasPrimaryRateLimit ? Math.max(0, Math.min(1, 1 - primaryUsedPercent / 100)) : Math.min(todayUsage / dailyCeiling, 1);
+  // Require usedPercent > 0: a fresh reset at 0% would produce pct=1 (100% remaining),
+  // which Swift renders as an empty bar (1 − 1 = 0 in isRemaining mode).
+  const hasPrimaryRateLimit = typeof primaryUsedPercent === "number" && primaryResetFresh && primaryUsedPercent > 0;
+  const hasSecondaryRateLimit = typeof secondaryUsedPercent === "number" && secondaryResetFresh && secondaryUsedPercent > 0;
+  // Carry-forward: when today has no activity yet (e.g. just past midnight), show the most
+  // recent active day so the bars don't reset to empty before the user opens Codex.
+  const carryEntry = !hasPrimaryRateLimit && todayUsage === 0
+    ? (dailySeries.slice(0, -1).reverse().find((d) => (d.tokens || 0) > 0) ?? null)
+    : null;
+  const displayDayUsage   = carryEntry ? (carryEntry.tokens  || 0) : todayUsage;
+  const displayDayPrompts = carryEntry ? (carryEntry.prompts || 0) : todayPromptCount;
+  const primaryLabelFallback = carryEntry
+    ? (carryEntry.date === shiftDateStr(todayDate, -1) ? "Yesterday" : "Recent")
+    : "Today";
+  const primaryRemainingPct = hasPrimaryRateLimit ? Math.max(0, Math.min(1, 1 - primaryUsedPercent / 100)) : Math.min(displayDayUsage / dailyCeiling, 1);
   const secondaryRemainingPct = hasSecondaryRateLimit ? Math.max(0, Math.min(1, 1 - secondaryUsedPercent / 100)) : Math.min(weeklyUsage / weeklyCeiling, 1);
 
   // Always compute a projected 5h window for the time-progress bar.
@@ -383,19 +395,21 @@ function buildMenubarData(daily) {
     updatedAt: new Date().toISOString(),
     title: "Codex",
     reportPath: path.resolve(ROOT, "report.html"),
-    primaryLabel: hasPrimaryRateLimit ? "5h left" : "Today",
+    primaryLabel: hasPrimaryRateLimit ? "5h left" : primaryLabelFallback,
     secondaryLabel: hasSecondaryRateLimit ? "Week left" : "7 Days",
     primary: {
-      usage: hasPrimaryRateLimit ? Math.round(primaryRemainingPct * 100) : todayUsage,
+      usage: hasPrimaryRateLimit ? Math.round(primaryRemainingPct * 100) : displayDayUsage,
       ceiling: hasPrimaryRateLimit ? 100 : dailyCeiling,
       pct: primaryRemainingPct,
-      usageDisplay: hasPrimaryRateLimit ? `${Math.round(primaryRemainingPct * 100)}% left` : `${compactNumber(todayUsage)} tok`,
+      usageDisplay: hasPrimaryRateLimit ? `${Math.round(primaryRemainingPct * 100)}% left` : `${compactNumber(displayDayUsage)} tok`,
       ceilingDisplay: hasPrimaryRateLimit ? null : `${compactNumber(dailyCeiling)} tok`,
       detail: hasPrimaryRateLimit
         ? formatResetDetail(rateLimits?.primary?.resets_at)
-        : projectedWindowEnd !== null
-          ? formatResetDetail(projectedWindowEnd)
-          : `${todayPromptCount} prompts`,
+        : carryEntry !== null
+          ? `${displayDayPrompts} prompts (${carryEntry.date})`
+          : projectedWindowEnd !== null
+            ? formatResetDetail(projectedWindowEnd)
+            : `${displayDayPrompts} prompts`,
       startEpoch: projectedWindowStart,
       endEpoch: projectedWindowEnd,
       isRemaining: hasPrimaryRateLimit || null,

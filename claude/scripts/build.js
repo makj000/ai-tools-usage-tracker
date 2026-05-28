@@ -17,6 +17,7 @@ const PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
 const COWORK_BASE  = path.join(os.homedir(), "Library", "Application Support", "Claude", "local-agent-mode-sessions");
 const MENUBAR_JSON_PATH = path.join(os.homedir(), ".claude", "claude-tracker-menubar.json");
 const STATUSLINE_RATE_LIMIT_CACHE_PATH = path.join(os.homedir(), ".claude", "statusline-rate-limits.json");
+const MENUBAR_ONLY_FLAG = "--menubar-only";
 
 const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
 
@@ -1046,6 +1047,34 @@ function maybeCleanup(oldFiles) {
   return removed;
 }
 
+function readConfig() {
+  return fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")) : {};
+}
+
+function applyUsageConfig(config, windowUsage, tokens) {
+  if (config.extraSpentOverride != null) tokens.extraTotals.cost = config.extraSpentOverride;
+  // Plan-based ceilings: fill in seeds from the plan table when not manually overridden.
+  if (config.plan && PLAN_CEILINGS[config.plan]) {
+    const p = PLAN_CEILINGS[config.plan];
+    if (config.windowLimitSeed == null) config.windowLimitSeed = p.window;
+    if (config.weeklyLimitSeed == null) config.weeklyLimitSeed = p.weekly;
+  }
+  if (config.weeklyLimitSeed != null && windowUsage?.weekly) {
+    windowUsage.weekly.ceiling = config.weeklyLimitSeed;
+    windowUsage.weekly.pct = Math.min(windowUsage.weekly.usage / config.weeklyLimitSeed, 1.5);
+  }
+  if (config.windowLimitSeed != null && windowUsage) {
+    windowUsage.medianCeiling = config.windowLimitSeed;
+    windowUsage.pctUsed = Math.min(windowUsage.currentUsage / config.windowLimitSeed, 1.5);
+    if (windowUsage.todayWindows) {
+      for (const w of windowUsage.todayWindows) {
+        w.ceiling = config.windowLimitSeed;
+        w.pct = Math.min(w.usage / config.windowLimitSeed, 1.5);
+      }
+    }
+  }
+}
+
 function writeMenubarJson(wu, totals, extraTotals, extraPurchasedSeed) {
   try {
     const rateLimits = readStatuslineRateLimits();
@@ -1122,20 +1151,32 @@ function writeMenubarJson(wu, totals, extraTotals, extraPurchasedSeed) {
   }
 }
 
-function build() {
+function build(argv = process.argv.slice(2)) {
   const t0 = Date.now();
+  const menubarOnly = argv.includes(MENUBAR_ONLY_FLAG);
+
+  const tokens = buildTokens();
+  // Cowork sessions — read once, used for window detection + data merging
+  const coworkSessions = readCoworkSessions();
+  const windowUsage = buildWindowUsage(coworkSessions);
+  const config = readConfig();
+  applyUsageConfig(config, windowUsage, tokens);
+
+  if (menubarOnly) {
+    delete tokens._prompts;
+    writeMenubarJson(windowUsage, tokens.totals, tokens.extraTotals, config.extraPurchasedSeed ?? null);
+    const ms = Date.now() - t0;
+    console.log(`[build] wrote ${MENUBAR_JSON_PATH} — $${tokens.totals.cost.toFixed(2)} equiv · ${tokens.totals.messages} turns · ${ms}ms`);
+    return;
+  }
+
   const eventData = readAllEventFiles();
   maybeCleanup(eventData.oldFiles);
   // Re-scan after cleanup so the report reflects the new state.
   const fresh = process.argv.includes("--cleanup") ? readAllEventFiles() : eventData;
-
-  const tokens = buildTokens();
   const history = readJsonl(HISTORY_PATH);
   const enrichResult = enrichHistory(history, tokens._prompts);
   delete tokens._prompts; // internal, don't ship
-
-  // Cowork sessions — read once, used for window detection + data merging
-  const coworkSessions = readCoworkSessions();
 
   // Merge Cowork into tokens.sessions (sorted by lastTs desc, cap at 100)
   const coworkSessionEntries = coworkSessions.map(s => ({
@@ -1181,31 +1222,6 @@ function build() {
     .filter(e => e.timestamp)
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-  const windowUsage = buildWindowUsage(coworkSessions);
-
-  const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")) : {};
-  if (config.extraSpentOverride != null) tokens.extraTotals.cost = config.extraSpentOverride;
-  // Plan-based ceilings: fill in seeds from the plan table when not manually overridden.
-  if (config.plan && PLAN_CEILINGS[config.plan]) {
-    const p = PLAN_CEILINGS[config.plan];
-    if (config.windowLimitSeed == null) config.windowLimitSeed = p.window;
-    if (config.weeklyLimitSeed == null) config.weeklyLimitSeed = p.weekly;
-  }
-  if (config.weeklyLimitSeed != null && windowUsage?.weekly) {
-    windowUsage.weekly.ceiling = config.weeklyLimitSeed;
-    windowUsage.weekly.pct = Math.min(windowUsage.weekly.usage / config.weeklyLimitSeed, 1.5);
-  }
-  if (config.windowLimitSeed != null && windowUsage) {
-    windowUsage.medianCeiling = config.windowLimitSeed;
-    windowUsage.pctUsed = Math.min(windowUsage.currentUsage / config.windowLimitSeed, 1.5);
-    if (windowUsage.todayWindows) {
-      for (const w of windowUsage.todayWindows) {
-        w.ceiling = config.windowLimitSeed;
-        w.pct = Math.min(w.usage / config.windowLimitSeed, 1.5);
-      }
-    }
-  }
-
   const data = {
     generatedAt: new Date().toISOString(),
     ...(config.extraPurchasedSeed != null ? { extraPurchasedSeed: config.extraPurchasedSeed } : {}),
@@ -1233,6 +1249,7 @@ if (typeof module !== "undefined" && module.exports && require.main !== module) 
   module.exports = {
     getPricing, calcCost, zeroCounts, addCounts, slugToPath,
     isRealPrompt, extractPromptText, enrichHistory, readJsonl, toLADate,
+    applyUsageConfig,
   };
 } else {
   build();

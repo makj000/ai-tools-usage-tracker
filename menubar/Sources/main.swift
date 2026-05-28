@@ -526,7 +526,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controllers: [ProviderStatusController] = []
     private var refreshTimer: Timer?
     private var barRedrawTimer: Timer?
-    private let buildQueue = DispatchQueue(label: "agentic-tool-usage-tracker.codex-build")
+    private let buildQueue = DispatchQueue(label: "agentic-tool-usage-tracker.menubar-build")
+    private var claudeBuildInFlight = false
     private var codexBuildInFlight = false
 
     private var barItemWidth: CGFloat {
@@ -548,6 +549,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .appendingPathComponent(".claude/statusline-rate-limits.json")
     private static let codexDataURL = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".codex/codex-tracker-menubar.json")
+    private static let claudeBuildScriptURL = repoRootURL.appendingPathComponent("claude/scripts/build.js")
     private static let codexBuildScriptURL = repoRootURL.appendingPathComponent("codex/scripts/build.js")
     private static let nodePathCandidates = [
         "/opt/homebrew/bin/node",
@@ -679,6 +681,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func refreshAll() {
         refreshFromDataFiles()
+        refreshClaudeMenubarData()
         refreshCodexMenubarData()
     }
 
@@ -688,12 +691,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         barView.needsDisplay = true
     }
 
+    private func refreshClaudeMenubarData() {
+        guard !claudeBuildInFlight else { return }
+        guard FileManager.default.fileExists(atPath: Self.claudeBuildScriptURL.path) else { return }
+        claudeBuildInFlight = true
+        buildQueue.async { [weak self] in
+            self?.runMenubarBuild(scriptURL: Self.claudeBuildScriptURL)
+            DispatchQueue.main.async { [weak self] in
+                self?.claudeBuildInFlight = false
+                self?.refreshFromDataFiles()
+            }
+        }
+    }
+
     private func refreshCodexMenubarData() {
         guard !codexBuildInFlight else { return }
         guard FileManager.default.fileExists(atPath: Self.codexBuildScriptURL.path) else { return }
         codexBuildInFlight = true
         buildQueue.async { [weak self] in
-            self?.runCodexMenubarBuild()
+            self?.runMenubarBuild(scriptURL: Self.codexBuildScriptURL)
             DispatchQueue.main.async { [weak self] in
                 self?.codexBuildInFlight = false
                 self?.refreshFromDataFiles()
@@ -701,8 +717,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func runCodexMenubarBuild() {
-        let invocation = codexNodeInvocation()
+    private func runMenubarBuild(scriptURL: URL) {
+        let invocation = nodeInvocation(scriptURL: scriptURL)
         let task = Process()
         task.executableURL = invocation.executableURL
         task.arguments = invocation.arguments
@@ -719,11 +735,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {}
     }
 
-    private func codexNodeInvocation() -> (executableURL: URL, arguments: [String]) {
+    private func nodeInvocation(scriptURL: URL) -> (executableURL: URL, arguments: [String]) {
         for path in Self.nodePathCandidates where FileManager.default.isExecutableFile(atPath: path) {
-            return (URL(fileURLWithPath: path), [Self.codexBuildScriptURL.path, "--menubar-only"])
+            return (URL(fileURLWithPath: path), [scriptURL.path, "--menubar-only"])
         }
-        return (URL(fileURLWithPath: "/usr/bin/env"), ["node", Self.codexBuildScriptURL.path, "--menubar-only"])
+        return (URL(fileURLWithPath: "/usr/bin/env"), ["node", scriptURL.path, "--menubar-only"])
     }
 
     @objc private func refreshNow() {
