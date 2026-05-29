@@ -195,15 +195,21 @@ final class CombinedBarView: NSView {
         guard totalDots > 0 else { return }
 
         let activeDots = min(max(provider.cycleActiveDots, 0), totalDots)
-        let spacing = totalDots > 1 ? (width - dotSize) / CGFloat(totalDots - 1) : 0
+        // Each dot gets an equal segment; grow to ~75% of the segment so dots
+        // become short bars at wider widths and circles at narrow widths.
+        let segW = width / CGFloat(totalDots)
+        let dotW = max(dotSize, segW * 0.75)
+        // Corner radius: full half-height (pill) when wide, full half-width (circle) when small.
+        let cornerR = min(dotW, dotSize) / 2
 
         for idx in 0..<totalDots {
-            let dotRect = NSRect(x: x + CGFloat(idx) * spacing, y: y, width: dotSize, height: dotSize)
+            let dotX = x + CGFloat(idx) * segW + (segW - dotW) / 2
+            let dotRect = NSRect(x: dotX, y: y, width: dotW, height: dotSize)
             let color = idx < activeDots
                 ? NSColor.black.withAlphaComponent(0.92)
                 : NSColor.black.withAlphaComponent(0.22)
             color.setFill()
-            NSBezierPath(ovalIn: dotRect).fill()
+            NSBezierPath(roundedRect: dotRect, xRadius: cornerR, yRadius: cornerR).fill()
         }
     }
 }
