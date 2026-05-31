@@ -6,7 +6,7 @@
 - **Increment the minor version** (e.g. 2.2.0 -> 2.3.0) for each command (each user prompt/request). Reset patch to 0 on minor bump.
 - Version appears in two places — keep them in sync:
   - `package.json` `"version"` field
-  - `report.html` header span (the `v2.x.x` label)
+  - `claude/report.html` header span (the `v3.x.x` label)
 
 ## Project Overview
 
@@ -126,6 +126,19 @@ Optional JSON file read by build.js on every build. Supported fields:
 - `extraSpentOverride` — override the transcript-derived `extraTotals.cost` (number, USD); useful when transcript detection undercounts actual extra credit charges
 - `weeklyLimitSeed` — override the estimated weekly ceiling (number, USD); use to calibrate against the actual % shown on claude.ai's usage page: `weeklyLimitSeed = currentWeeklyUsage / claudeAiPct`; calibration history is tracked in memory (`project_weekly_calibration.md`) — always record old seed + weeklyUsage + claude.ai % before updating, to detect oscillation
 - `windowLimitSeed` — override the median-derived per-window ceiling (number, USD); use when the median is stale (old rate-limit hits from when limits were higher): `windowLimitSeed = currentWindowUsage / claudeAiWindowPct`
+
+### Accuracy Inspector (`accuracy/`)
+
+A self-rescheduling subsystem that keeps the menu-bar estimates honest against the official usage pages. Lives in the top-level `accuracy/` dir (parallel to `claude/`, `codex/`, `menubar/`).
+
+- `scrape.js` — Playwright persistent-context scraper. `--login` opens a headed window to sign into `claude.ai` + `chatgpt.com` once; thereafter headless. Captures visible text + full-page screenshot per provider into `accuracy/snapshots/`, sets a `loginWall` flag, writes `snapshots/latest.json`. It deliberately does **not** parse numbers — extraction is delegated to the agent so it survives page redesigns.
+- `expected.js` — reads the per-provider menubar JSON the Swift app shows (`~/.claude/claude-tracker-menubar.json`, `~/.codex/codex-tracker-menubar.json`) and normalizes the displayed window/weekly metrics for comparison. Note Codex shows `% left` (remaining) vs Claude `% used`.
+- `prompt.md` — agent instructions: normalize used-vs-remaining, compute per-metric `delta_pp`, flag `off` when `|delta| > 5`pp, prefer config-seed calibration over code edits, run tests and revert on failure, emit a strict JSON verdict.
+- `inspect.js` — orchestrator: scrape → invoke local `claude` CLI headless (`-p … --output-format json`; `--dangerously-skip-permissions` in fix mode, read-only tools in `--dry-run`) → record verdict to `history.jsonl` → write per-provider `*-accuracy.json` (read by the menu bar) → adaptive reschedule into `state.json`. Flags: `--once`, `--dry-run`, `--no-scrape`, `--mock-agent <verdict.json>` (test hook).
+- **Adaptive cadence**: blends the agent's `proposedNextIntervalHours` with an EWMA over recent `history.jsonl` discrepancy magnitude + off-rate; clamped to `[MIN_HOURS=2, MAX_HOURS=168]`. Calm runs grow the interval geometrically (≤1.5×, never shrinking); large/frequent gaps pull toward 2h. Bounds live in `accuracy/lib/paths.js`.
+- **Scheduling**: `com.ai-tools-usage-tracker.accuracy.plist` fires `accuracy/run_inspect.sh` hourly; the script early-exits until `state.json.nextRunAt`, so the effective cadence is agent-chosen without rewriting the plist. `--force` bypasses the gate (used by the menu bar's "Run accuracy check now"). `install_launch_agent.sh` installs both this and the menubar agent.
+- **Menu bar surface** (`menubar/Sources/main.swift`): `AccuracyStatus` decodes `*-accuracy.json`; each provider shows an `Accuracy: ✓/⚠/🔑 …` item + a "Run accuracy check now" action that shells `run_inspect.sh --force`.
+- **Gitignored**: `accuracy/{node_modules,snapshots,state.json,history.jsonl,.browser-profile}`.
 
 ### History Enrichment (server-side)
 

@@ -61,6 +61,45 @@ struct MenubarData: Codable {
     var resolvedSecondary: MetricData? { secondary ?? weekly }
 }
 
+struct AccuracyStatus: Codable {
+    let checkedAt: String?
+    let status: String?            // ok | off | fixing | needs-login | error | unknown
+    let maxDeltaPp: Double?
+    let action: String?
+    let testsPassed: Bool?
+    let notes: String?
+    let nextCheckInHours: Double?
+
+    // Compact one-line label for the menu, e.g. "Accuracy: ✓ in sync (Δ2pp, 3h ago)".
+    func menuTitle() -> String {
+        let icon: String
+        let word: String
+        switch status {
+        case "ok":          icon = "✓"; word = "in sync"
+        case "off":         icon = "⚠"; word = "off"
+        case "fixing":      icon = "⚠"; word = "off — auto-fixing"
+        case "needs-login": icon = "🔑"; word = "needs sign-in"
+        case "error":       icon = "⚠"; word = "check failed"
+        default:            icon = "…"; word = "unknown"
+        }
+        var bits: [String] = []
+        if let d = maxDeltaPp { bits.append(String(format: "Δ%.0fpp", d)) }
+        if let age = ageString() { bits.append(age) }
+        let suffix = bits.isEmpty ? "" : " (\(bits.joined(separator: ", ")))"
+        return "Accuracy: \(icon) \(word)\(suffix)"
+    }
+
+    private func ageString() -> String? {
+        guard let checkedAt,
+              let date = ISO8601DateFormatter().date(from: checkedAt) else { return nil }
+        let secs = Date().timeIntervalSince(date)
+        if secs < 90 { return "just now" }
+        if secs < 3600 { return "\(Int(secs / 60))m ago" }
+        if secs < 86400 { return "\(Int(secs / 3600))h ago" }
+        return "\(Int(secs / 86400))d ago"
+    }
+}
+
 struct StatuslineRateLimitCache: Codable {
     let rateLimits: RateLimitsData?
 
@@ -221,19 +260,21 @@ final class ProviderStatusController {
     let theme: ProviderTheme
     let usagePageURL: URL?
     let apiCreditURL: URL?
+    let accuracyURL: URL?
 
     private let openTitle: String
     private let sectionTitle: String
     private var primaryMenuItem: NSMenuItem!
     private var secondaryMenuItem: NSMenuItem!
     private var openUsageMenuItem: NSMenuItem!
+    private var accuracyMenuItem: NSMenuItem?
     private var extraCreditMenuItem: NSMenuItem?
     private var apiCreditMenuItem: NSMenuItem?
     private var openMenuItem: NSMenuItem!
     private var lastReportPath: String?
     private var currentData: MenubarData?
 
-    init(dataURL: URL, weeklyResetCacheURL: URL? = nil, openTitle: String, sectionTitle: String, fallbackBuildCommand: String, theme: ProviderTheme, usagePageURL: URL? = nil, apiCreditURL: URL? = nil) {
+    init(dataURL: URL, weeklyResetCacheURL: URL? = nil, openTitle: String, sectionTitle: String, fallbackBuildCommand: String, theme: ProviderTheme, usagePageURL: URL? = nil, apiCreditURL: URL? = nil, accuracyURL: URL? = nil) {
         self.dataURL = dataURL
         self.weeklyResetCacheURL = weeklyResetCacheURL
         self.openTitle = openTitle
@@ -242,6 +283,7 @@ final class ProviderStatusController {
         self.theme = theme
         self.usagePageURL = usagePageURL
         self.apiCreditURL = apiCreditURL
+        self.accuracyURL = accuracyURL
     }
 
     func install(into menu: NSMenu, target: AppDelegate) {
@@ -265,6 +307,18 @@ final class ProviderStatusController {
         openUsageMenuItem.representedObject = self
         openUsageMenuItem.isEnabled = usagePageURL != nil
         menu.addItem(openUsageMenuItem)
+
+        if accuracyURL != nil {
+            let statusItem = NSMenuItem(title: "Accuracy: …", action: nil, keyEquivalent: "")
+            statusItem.isEnabled = false
+            accuracyMenuItem = statusItem
+            menu.addItem(statusItem)
+
+            let checkNow = NSMenuItem(title: "Run accuracy check now", action: #selector(AppDelegate.runAccuracyCheckFromMenuItem(_:)), keyEquivalent: "")
+            checkNow.target = target
+            checkNow.representedObject = self
+            menu.addItem(checkNow)
+        }
 
         let ecItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         ecItem.isEnabled = false
@@ -310,7 +364,22 @@ final class ProviderStatusController {
         NSWorkspace.shared.open(apiCreditURL)
     }
 
+    func refreshAccuracy() {
+        guard let item = accuracyMenuItem else { return }
+        guard let accuracyURL,
+              let data = try? Data(contentsOf: accuracyURL),
+              let status = try? JSONDecoder().decode(AccuracyStatus.self, from: data) else {
+            item.title = "Accuracy: not checked yet"
+            return
+        }
+        item.title = status.menuTitle()
+        if let notes = status.notes, !notes.isEmpty {
+            item.toolTip = notes
+        }
+    }
+
     func refresh() {
+        refreshAccuracy()
         guard let jsonData = try? Data(contentsOf: dataURL),
               let data = try? JSONDecoder().decode(MenubarData.self, from: jsonData) else {
             currentData = nil
@@ -557,6 +626,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .appendingPathComponent(".codex/codex-tracker-menubar.json")
     private static let claudeBuildScriptURL = repoRootURL.appendingPathComponent("claude/scripts/build.js")
     private static let codexBuildScriptURL = repoRootURL.appendingPathComponent("codex/scripts/build.js")
+    private static let claudeAccuracyURL = URL(fileURLWithPath: NSHomeDirectory())
+        .appendingPathComponent(".claude/claude-accuracy.json")
+    private static let codexAccuracyURL = URL(fileURLWithPath: NSHomeDirectory())
+        .appendingPathComponent(".codex/codex-accuracy.json")
+    private static let accuracyScriptURL = repoRootURL.appendingPathComponent("accuracy/run_inspect.sh")
+    private var accuracyInFlight = false
     private static let nodePathCandidates = [
         "/opt/homebrew/bin/node",
         "/usr/local/bin/node",
@@ -581,7 +656,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     tint: NSColor.systemOrange.withAlphaComponent(0.74)
                 ),
                 usagePageURL: URL(string: "https://claude.ai/settings/usage"),
-                apiCreditURL: URL(string: "https://platform.claude.com/dashboard")
+                apiCreditURL: URL(string: "https://platform.claude.com/dashboard"),
+                accuracyURL: Self.claudeAccuracyURL
             ),
             ProviderStatusController(
                 dataURL: Self.codexDataURL,
@@ -592,7 +668,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     tint: NSColor.systemBlue.withAlphaComponent(0.72)
                 ),
                 usagePageURL: URL(string: "https://chatgpt.com/codex/settings/usage"),
-                apiCreditURL: URL(string: "https://platform.openai.com/home")
+                apiCreditURL: URL(string: "https://platform.openai.com/home"),
+                accuracyURL: Self.codexAccuracyURL
             )
         ]
 
@@ -770,6 +847,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openApiCreditFromMenuItem(_ sender: NSMenuItem) {
         guard let controller = sender.representedObject as? ProviderStatusController else { return }
         controller.openApiCredit()
+    }
+
+    @objc func runAccuracyCheckFromMenuItem(_ sender: NSMenuItem) {
+        guard !accuracyInFlight else { return }
+        guard FileManager.default.fileExists(atPath: Self.accuracyScriptURL.path) else { return }
+        accuracyInFlight = true
+        buildQueue.async { [weak self] in
+            guard let self else { return }
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            task.arguments = [Self.accuracyScriptURL.path, "--force"]
+            task.currentDirectoryURL = Self.repoRootURL
+            if let devnull = FileHandle(forWritingAtPath: "/dev/null") {
+                task.standardOutput = devnull
+                task.standardError = devnull
+            }
+            do { try task.run(); task.waitUntilExit() } catch {}
+            DispatchQueue.main.async { [weak self] in
+                self?.accuracyInFlight = false
+                self?.refreshFromDataFiles()
+            }
+        }
     }
 }
 

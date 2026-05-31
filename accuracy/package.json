@@ -1,0 +1,16 @@
+{
+  "name": "ai-tools-usage-tracker-accuracy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Periodic accuracy inspector: scrapes official usage pages, compares to tracker numbers, auto-fixes drift.",
+  "scripts": {
+    "login": "node scrape.js --login",
+    "scrape": "node scrape.js",
+    "expected": "node expected.js",
+    "inspect": "node inspect.js --once",
+    "inspect:dry": "node inspect.js --once --dry-run"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
+  }
+}
