@@ -82,7 +82,7 @@
 <header>
   <div>
     <h1>Codex Tracker</h1>
-    <div class="subtitle">Local view of Codex threads, prompts, project activity, and token usage based on <code>~/.codex</code> state.</div>
+    <div class="subtitle">Local view of Codex threads, prompts, project activity, token usage, and ChatGPT desktop activity based on <code>~/.codex</code> and <code>~/Library/Application Support/com.openai.chat</code> state.</div>
   </div>
   <div class="stamp" id="generatedAt">Waiting for data...</div>
 </header>
@@ -101,6 +101,12 @@
       <div id="dailyChart" class="daily-chart"></div>
     </section>
     <section class="panel section">
+      <h2>Desktop App Activity</h2>
+      <div id="desktopStats" class="stats"></div>
+      <div id="desktopChart" class="daily-chart"></div>
+      <div id="desktopTable" class="table"></div>
+    </section>
+    <section class="panel section">
       <h2>Recent Threads</h2>
       <div id="threadTable" class="table"></div>
     </section>
@@ -117,16 +123,23 @@ function number(n) {
 function fmtDate(value) {
   return new Date(value).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
+function shortId(value) {
+  if (!value || value.length <= 12) return value || '';
+  return `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
 function renderStats(data) {
   const stats = [
-    ['Threads', number(data.overview.threadCount), 'accent'],
-    ['Projects', number(data.overview.projectCount), 'blue'],
-    ['Prompts', number(data.overview.promptCount), 'green'],
-    ['Tokens', number(data.overview.totalTokens), 'accent'],
-    ['Active Days', number(data.overview.activeDays), 'blue'],
-    ['Avg Tokens / Thread', number(data.overview.avgTokensPerThread), 'green'],
+    ['Threads', data.overview.threadCount, 'accent'],
+    ['Projects', data.overview.projectCount, 'blue'],
+    ['Prompts', data.overview.promptCount, 'green'],
+    ['Tokens', data.overview.totalTokens, 'accent'],
+    ['Active Days', data.overview.activeDays, 'blue'],
+    ['Avg Tokens / Thread', data.overview.avgTokensPerThread, 'green'],
+    ['Desktop Workspaces', data.overview.desktopWorkspaceCount || 0, 'blue'],
+    ['Desktop Blobs', data.overview.desktopBlobCount || 0, 'purple'],
+    ['Desktop Last Update', data.overview.desktopLastActivityAt ? fmtDate(data.overview.desktopLastActivityAt) : 'n/a', 'green'],
   ];
-  document.getElementById('stats').innerHTML = stats.map(([label, value, cls]) => `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value ${cls}">${value}</div></div>`).join('');
+  document.getElementById('stats').innerHTML = stats.map(([label, value, cls]) => `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value ${cls}">${typeof value === 'number' ? number(value) : value}</div></div>`).join('');
 }
 function renderProjects(data) {
   const max = Math.max(...data.projects.map((p) => p.totalTokens), 1);
@@ -136,6 +149,22 @@ function renderDaily(data) {
   const points = data.daily.slice(-21);
   const max = Math.max(...points.map((p) => p.tokens), 1);
   document.getElementById('dailyChart').innerHTML = (points.map((point) => `<div class="bar-card" title="${point.date}: ${number(point.tokens)} tokens, ${number(point.prompts)} prompts"><div class="bar-wrap"><div class="bar" style="height:${Math.max((point.tokens / max) * 100, point.tokens ? 6 : 0)}%"></div></div><div class="bar-label">${point.date.slice(5)}</div></div>`).join('')) || '<div class="empty">No daily activity yet.</div>';
+}
+function renderDesktop(data) {
+  const desktop = data.desktop || { workspaces: [] };
+  const desktopPoints = (desktop.daily || []).slice(-21);
+  const desktopMax = Math.max(...desktopPoints.map((p) => p.blobs || 0), 1);
+  const rows = desktop.workspaces.slice(0, 12).map((workspace) => {
+    const updated = workspace.lastActivityAt ? fmtDate(workspace.lastActivityAt) : 'n/a';
+    return `<div class="table-row"><div class="row"><div class="thread-title">${shortId(workspace.workspaceId)}</div><div class="accent">${number(workspace.fileCount)} blobs</div></div><div class="thread-meta"><span>Last activity ${updated}</span></div></div>`;
+  }).join('');
+  document.getElementById('desktopStats').innerHTML = [
+    ['Workspaces', data.overview.desktopWorkspaceCount || 0, 'blue'],
+    ['Blobs', data.overview.desktopBlobCount || 0, 'purple'],
+    ['Last Update', data.overview.desktopLastActivityAt ? fmtDate(data.overview.desktopLastActivityAt) : 'n/a', 'green'],
+  ].map(([label, value, cls]) => `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value ${cls}">${typeof value === 'number' ? number(value) : value}</div></div>`).join('');
+  document.getElementById('desktopChart').innerHTML = (desktopPoints.map((point) => `<div class="bar-card" title="${point.date}: ${number(point.blobs)} blobs"><div class="bar-wrap"><div class="bar" style="height:${Math.max((point.blobs / desktopMax) * 100, point.blobs ? 6 : 0)}%"></div></div><div class="bar-label">${point.date.slice(5)}</div></div>`).join('')) || '<div class="empty">No desktop activity yet.</div>';
+  document.getElementById('desktopTable').innerHTML = rows || '<div class="empty">No ChatGPT desktop activity found on disk.</div>';
 }
 function renderThreads(data) {
   document.getElementById('threadTable').innerHTML = (data.threads.slice(0, 20).map((thread) => `<div class="table-row"><div class="row"><div class="thread-title">${thread.title}</div><div class="accent">${number(thread.tokensUsed)} tokens</div></div><div class="thread-meta"><span>${thread.projectLabel}</span><span>${thread.model}</span><span>${thread.reasoningEffort}</span><span>${number(thread.promptCount)} prompts</span><span>Updated ${fmtDate(thread.updatedAt)}</span></div>${thread.lastPrompt ? `<div class="prompt-text">${thread.lastPrompt}</div>` : ''}</div>`).join('')) || '<div class="empty">No thread data found.</div>';
@@ -153,6 +182,7 @@ function render() {
   renderStats(data);
   renderProjects(data);
   renderDaily(data);
+  renderDesktop(data);
   renderThreads(data);
   renderPrompts(data);
 }

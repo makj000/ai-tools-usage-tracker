@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const {
   buildDailyActivity,
   buildProjects,
   buildOverview,
   formatProjectLabel,
   groupPromptsBySession,
+  readChatGPTDesktopActivity,
   shortProjectName,
 } = require("../scripts/build.js");
 
@@ -103,6 +107,39 @@ test("computes daily counts and overview totals", () => {
   assert.strictEqual(overview.projectCount, 2);
   assert.strictEqual(overview.promptCount, 2);
   assert.strictEqual(overview.totalTokens, 400);
+});
+
+console.log("\nreadChatGPTDesktopActivity");
+
+test("summarizes desktop conversation blobs by workspace and day", () => {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-desktop-"));
+  const firstWorkspace = path.join(baseDir, "conversations-v3-workspace-a");
+  const nestedRoot = path.join(baseDir, "project-g-p-123");
+  const secondWorkspace = path.join(nestedRoot, "conversations-v3-workspace-b");
+  fs.mkdirSync(firstWorkspace, { recursive: true });
+  fs.mkdirSync(secondWorkspace, { recursive: true });
+
+  const fileA = path.join(firstWorkspace, "a.data");
+  const fileB = path.join(firstWorkspace, "b.data");
+  const fileC = path.join(secondWorkspace, "c.data");
+  fs.writeFileSync(fileA, "alpha");
+  fs.writeFileSync(fileB, "beta");
+  fs.writeFileSync(fileC, "gamma");
+
+  const morning = new Date("2026-05-04T16:00:00.000Z");
+  const evening = new Date("2026-05-05T16:00:00.000Z");
+  fs.utimesSync(fileA, morning, morning);
+  fs.utimesSync(fileB, evening, evening);
+  fs.utimesSync(fileC, evening, evening);
+
+  const summary = readChatGPTDesktopActivity(baseDir);
+  assert.strictEqual(summary.workspaceCount, 2);
+  assert.strictEqual(summary.blobCount, 3);
+  assert.strictEqual(summary.daily.length, 2);
+  assert.strictEqual(summary.workspaces[0].workspaceId, "workspace-a");
+  assert.strictEqual(summary.workspaces[0].fileCount, 2);
+  assert.strictEqual(summary.workspaces[0].lastActivityAt, evening.toISOString());
+  assert.strictEqual(summary.lastActivityAt, evening.toISOString());
 });
 
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`);

@@ -10,6 +10,7 @@ const OUTPUT = path.join(DATA_DIR, "data.js");
 const STATE_DB = path.join(os.homedir(), ".codex", "state_5.sqlite");
 const HISTORY_PATH = path.join(os.homedir(), ".codex", "history.jsonl");
 const MENUBAR_JSON_PATH = path.join(os.homedir(), ".codex", "codex-tracker-menubar.json");
+const OPENAI_CHAT_DIR = path.join(os.homedir(), "Library", "Application Support", "com.openai.chat");
 const TIME_ZONE = "America/Los_Angeles";
 const DAILY_CEILING_DAYS = 14;
 const WEEKLY_SERIES_DAYS = 56;
@@ -178,6 +179,87 @@ function buildDailyActivity(threads, history) {
   return Array.from(perDay.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
+function readChatGPTDesktopActivity(baseDir = OPENAI_CHAT_DIR) {
+  const empty = {
+    workspaceCount: 0,
+    blobCount: 0,
+    lastActivityAt: null,
+    lastActivityAtEpochMs: null,
+    workspaces: [],
+    daily: [],
+  };
+  if (!fs.existsSync(baseDir)) return empty;
+
+  const workspaces = [];
+  const daily = new Map();
+  let blobCount = 0;
+  let lastActivityAtEpochMs = null;
+
+  const stack = [baseDir];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (/^conversations-v3-/.test(entry.name)) {
+          let fileCount = 0;
+          let workspaceLastActivityAtEpochMs = null;
+          try {
+            for (const item of fs.readdirSync(fullPath, { withFileTypes: true })) {
+              if (!item.isFile() || !item.name.endsWith(".data")) continue;
+              const itemPath = path.join(fullPath, item.name);
+              const stat = fs.statSync(itemPath);
+              fileCount += 1;
+              blobCount += 1;
+              const mtime = stat.mtimeMs;
+              const date = laDate(mtime);
+              daily.set(date, (daily.get(date) || 0) + 1);
+              if (workspaceLastActivityAtEpochMs == null || mtime > workspaceLastActivityAtEpochMs) {
+                workspaceLastActivityAtEpochMs = mtime;
+              }
+              if (lastActivityAtEpochMs == null || mtime > lastActivityAtEpochMs) {
+                lastActivityAtEpochMs = mtime;
+              }
+            }
+          } catch {
+            continue;
+          }
+
+          workspaces.push({
+            workspaceId: entry.name.replace(/^conversations-v3-/, ""),
+            fileCount,
+            lastActivityAt: workspaceLastActivityAtEpochMs ? new Date(workspaceLastActivityAtEpochMs).toISOString() : null,
+            lastActivityAtEpochMs: workspaceLastActivityAtEpochMs,
+          });
+          continue;
+        }
+        stack.push(fullPath);
+      }
+    }
+  }
+
+  workspaces.sort((a, b) => (b.lastActivityAtEpochMs || 0) - (a.lastActivityAtEpochMs || 0) || b.fileCount - a.fileCount || a.workspaceId.localeCompare(b.workspaceId));
+  const dailyActivity = Array.from(daily.entries())
+    .map(([date, blobs]) => ({ date, blobs }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return {
+    workspaceCount: workspaces.length,
+    blobCount,
+    lastActivityAt: lastActivityAtEpochMs ? new Date(lastActivityAtEpochMs).toISOString() : null,
+    lastActivityAtEpochMs,
+    workspaces,
+    daily: dailyActivity,
+  };
+}
+
 function buildModelSummary(threads) {
   const models = new Map();
   for (const thread of threads) {
@@ -202,6 +284,9 @@ function buildOverview(threads, history, projects) {
     totalTokens,
     activeDays,
     avgTokensPerThread: threads.length ? Math.round(totalTokens / threads.length) : 0,
+    desktopWorkspaceCount: 0,
+    desktopBlobCount: 0,
+    desktopLastActivityAt: null,
   };
 }
 
@@ -449,15 +534,21 @@ function loadTrackerData() {
   );
   const history = readJsonl(HISTORY_PATH);
   const promptMap = groupPromptsBySession(history);
+  const desktop = readChatGPTDesktopActivity();
   const threads = buildThreads(rawThreads, promptMap, homeDir);
   const projects = buildProjects(threads);
   const daily = buildDailyActivity(threads, history);
   const models = buildModelSummary(threads);
   const threadsById = new Map(threads.map((thread) => [thread.id, thread]));
+  const overview = buildOverview(threads, history, projects);
+  overview.desktopWorkspaceCount = desktop.workspaceCount;
+  overview.desktopBlobCount = desktop.blobCount;
+  overview.desktopLastActivityAt = desktop.lastActivityAt;
   const data = {
     generatedAt: new Date().toISOString(),
     provider: "codex",
-    overview: buildOverview(threads, history, projects),
+    overview,
+    desktop,
     projects,
     threads: threads.slice(0, 500),
     recentPrompts: buildPromptFeed(history, threadsById, homeDir),
@@ -491,5 +582,6 @@ module.exports = {
   groupPromptsBySession,
   laDate,
   loadTrackerData,
+  readChatGPTDesktopActivity,
   shortProjectName,
 };
