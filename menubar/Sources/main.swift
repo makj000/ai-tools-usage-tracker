@@ -430,19 +430,21 @@ final class ProviderStatusController {
     }
 
     private func updateDisplay(data: MenubarData) {
-        let primaryLabel = data.resolvedPrimaryLabel
-        let secondaryLabel = data.resolvedSecondaryLabel
-
         if let metric = data.resolvedPrimary, let pct = metric.pct {
-            primaryMenuItem.title = formatMetric(label: primaryLabel, metric: metric, pct: pct)
+            primaryMenuItem.title = formatMetric(label: "5 hour", metric: metric, pct: pct)
         } else {
-            primaryMenuItem.title = "\(primaryLabel): no data yet"
+            primaryMenuItem.title = "5 hour - no data yet"
         }
 
         if let metric = data.resolvedSecondary, let pct = metric.pct {
-            secondaryMenuItem.title = formatMetric(label: secondaryLabel, metric: metric, pct: pct)
+            secondaryMenuItem.title = formatMetric(
+                label: "weekly",
+                metric: metric,
+                pct: pct,
+                fallbackResetEpoch: resolvedWeeklyCycle()?.resetEpoch
+            )
         } else {
-            secondaryMenuItem.title = "\(secondaryLabel): no data yet"
+            secondaryMenuItem.title = "weekly - no data yet"
         }
 
         if let spent = data.extraSpent {
@@ -458,38 +460,32 @@ final class ProviderStatusController {
         }
     }
 
-    private func formatEpochAsResets(_ epoch: Double) -> String {
+    private func formatResetTime(_ epoch: Double) -> String {
         let date = Date(timeIntervalSince1970: epoch)
         let formatter = DateFormatter()
         formatter.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "MMM d, h:mm a zzz"
-        return "resets \(formatter.string(from: date))"
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: date)
     }
 
-    private func formatMetric(label: String, metric: MenubarData.MetricData, pct: Double) -> String {
-        let pctInt = Int((pct * 100).rounded())
-        let usage = metric.usageDisplay ?? String(format: "%.2f", metric.usage)
+    private func formatMetric(
+        label: String,
+        metric: MenubarData.MetricData,
+        pct: Double,
+        fallbackResetEpoch: Double? = nil
+    ) -> String {
+        let usedFraction = metric.isRemaining == true ? 1 - pct : pct
+        let usedPct = Int((max(0, min(1, usedFraction)) * 100).rounded())
+        let leftPct = 100 - usedPct
         let now = Date().timeIntervalSince1970
-        let resolvedDetail: String?
-        if let d = metric.detail, !d.isEmpty,
-           metric.endEpoch == nil || (metric.endEpoch ?? 0) > now {
-            resolvedDetail = d
-        } else if let end = metric.endEpoch, end > now {
-            resolvedDetail = formatEpochAsResets(end)
-        } else {
-            resolvedDetail = nil
+        let resetEpoch = [metric.endEpoch, fallbackResetEpoch]
+            .compactMap { $0 }
+            .first { $0 > now }
+        if let resetEpoch {
+            return "\(label) - \(usedPct)% used (\(leftPct)% left, window resets at \(formatResetTime(resetEpoch)))"
         }
-        if let detail = resolvedDetail {
-            if let ceiling = metric.ceilingDisplay {
-                return "\(label): \(pctInt)%  (\(usage) / \(ceiling), \(detail))"
-            }
-            return "\(label): \(pctInt)%  (\(usage), \(detail))"
-        }
-        if let ceiling = metric.ceilingDisplay {
-            return "\(label): \(pctInt)%  (\(usage) / \(ceiling))"
-        }
-        return "\(label): \(pctInt)%  (\(usage))"
+        return "\(label) - \(usedPct)% used (\(leftPct)% left)"
     }
 
     private func resolvedWeeklyCycle() -> MenubarData.WeeklyCycleData? {

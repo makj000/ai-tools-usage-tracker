@@ -437,27 +437,25 @@ function rollingSums(series, size, field) {
   return sums;
 }
 
-function buildMenubarData(daily) {
+function buildMenubarData(daily, options = {}) {
   const dailySeries = buildRecentDailySeries(daily, WEEKLY_SERIES_DAYS);
   const last14 = dailySeries.slice(-DAILY_CEILING_DAYS);
   const today = dailySeries[dailySeries.length - 1] || { tokens: 0, prompts: 0 };
   const todayDate = today.date || laDate(Date.now());
-  const rateLimits = readLatestRateLimits();
+  const rateLimits = options.rateLimits === undefined ? readLatestRateLimits() : options.rateLimits;
   const todayUsage = today.tokens || 0;
   const todayPromptCount = today.prompts || 0;
   const dailyCeiling = Math.max(1, ...last14.map((entry) => entry.tokens || 0));
   const weeklyUsage = dailySeries.slice(-7).reduce((sum, entry) => sum + (entry.tokens || 0), 0);
   const weeklyPromptCount = dailySeries.slice(-7).reduce((sum, entry) => sum + (entry.prompts || 0), 0);
   const weeklyCeiling = Math.max(1, ...rollingSums(dailySeries, 7, "tokens"));
-  const nowSec = Math.floor(Date.now() / 1000);
+  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
   const primaryUsedPercent = rateLimits?.primary?.used_percent;
   const secondaryUsedPercent = rateLimits?.secondary?.used_percent;
   const primaryResetFresh = Number.isInteger(rateLimits?.primary?.resets_at) && rateLimits.primary.resets_at > nowSec;
   const secondaryResetFresh = Number.isInteger(rateLimits?.secondary?.resets_at) && rateLimits.secondary.resets_at > nowSec;
-  // Require usedPercent > 0: a fresh reset at 0% would produce pct=1 (100% remaining),
-  // which Swift renders as an empty bar (1 − 1 = 0 in isRemaining mode).
-  const hasPrimaryRateLimit = typeof primaryUsedPercent === "number" && primaryResetFresh && primaryUsedPercent > 0;
-  const hasSecondaryRateLimit = typeof secondaryUsedPercent === "number" && secondaryResetFresh && secondaryUsedPercent > 0;
+  const hasPrimaryRateLimit = typeof primaryUsedPercent === "number" && primaryResetFresh;
+  const hasSecondaryRateLimit = typeof secondaryUsedPercent === "number" && secondaryResetFresh;
   // Carry-forward: when today has no activity yet (e.g. just past midnight), show the most
   // recent active day so the bars don't reset to empty before the user opens Codex.
   const carryEntry = !hasPrimaryRateLimit && todayUsage === 0

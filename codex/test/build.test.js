@@ -5,6 +5,7 @@ const os = require("os");
 const path = require("path");
 const {
   buildDailyActivity,
+  buildMenubarData,
   buildProjects,
   buildOverview,
   formatProjectLabel,
@@ -140,6 +141,32 @@ test("summarizes desktop conversation blobs by workspace and day", () => {
   assert.strictEqual(summary.workspaces[0].fileCount, 2);
   assert.strictEqual(summary.workspaces[0].lastActivityAt, evening.toISOString());
   assert.strictEqual(summary.lastActivityAt, evening.toISOString());
+});
+
+console.log("\nbuildMenubarData");
+
+test("shows 5h and weekly window ends when current usage is zero", () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const primaryResetEpoch = nowSec + 2 * 60 * 60;
+  const secondaryResetEpoch = nowSec + 4 * 24 * 60 * 60;
+  const data = buildMenubarData([], {
+    nowSec,
+    rateLimits: {
+      primary: { used_percent: 0, resets_at: primaryResetEpoch },
+      secondary: { used_percent: 0, resets_at: secondaryResetEpoch },
+    },
+  });
+
+  assert.strictEqual(data.primaryLabel, "5h left");
+  assert.strictEqual(data.primary.usageDisplay, "100% left");
+  assert.strictEqual(data.primary.pct, 1);
+  assert.strictEqual(data.primary.endEpoch, primaryResetEpoch);
+  assert.match(data.primary.detail, /^resets /);
+  assert.strictEqual(data.secondaryLabel, "Week left");
+  assert.strictEqual(data.secondary.usageDisplay, "100% left");
+  assert.strictEqual(data.secondary.pct, 1);
+  assert.strictEqual(data.secondary.endEpoch, secondaryResetEpoch);
+  assert.match(data.secondary.detail, /^resets /);
 });
 
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`);
