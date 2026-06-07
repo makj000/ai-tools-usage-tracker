@@ -389,16 +389,29 @@ function readLatestRateLimits() {
   const rolloutPath = latestRolloutPath();
   if (!rolloutPath) return null;
 
+  const nowSec = Math.floor(Date.now() / 1000);
   const lines = fs.readFileSync(rolloutPath, "utf8").split("\n").filter(Boolean);
-  let latestPayload = null;
+  // Track the most recent non-null primary/secondary with a future resets_at independently.
+  // When the window limit is hit, OpenAI switches to a different limit_id (e.g. "premium")
+  // that returns primary: null — if we just took the last event we'd lose the rate limit signal.
+  let bestPrimary = null;
+  let bestSecondary = null;
   for (const line of lines) {
     try {
       const entry = JSON.parse(line);
       if (entry.type !== "event_msg" || entry.payload?.type !== "token_count") continue;
-      latestPayload = entry.payload;
+      const rl = entry.payload?.rate_limits;
+      if (!rl) continue;
+      if (rl.primary && Number.isInteger(rl.primary.resets_at) && rl.primary.resets_at > nowSec) {
+        bestPrimary = rl.primary;
+      }
+      if (rl.secondary && Number.isInteger(rl.secondary.resets_at) && rl.secondary.resets_at > nowSec) {
+        bestSecondary = rl.secondary;
+      }
     } catch {}
   }
-  return latestPayload?.rate_limits || null;
+  if (!bestPrimary && !bestSecondary) return null;
+  return { primary: bestPrimary, secondary: bestSecondary };
 }
 
 function buildRecentDailySeries(daily, days) {
