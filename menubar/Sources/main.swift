@@ -129,7 +129,10 @@ private let weeklyCycleSeconds: Double = 7 * 24 * 60 * 60
 final class CombinedBarView: NSView {
     static let windowTimeSegments: Int = 15
 
+    enum AlertLevel { case none, warning, critical }
+
     struct ProviderBars {
+        let hasTopBar: Bool
         let topPct: CGFloat
         let bottomPct: CGFloat
         let topIsRemaining: Bool
@@ -137,13 +140,17 @@ final class CombinedBarView: NSView {
         let cycleActiveDots: Int
         let cycleTotalDots: Int
         let theme: ProviderTheme
+        let topAlertLevel: AlertLevel
+        let bottomAlertLevel: AlertLevel
     }
 
     var providers: [ProviderBars] = []
 
     override func draw(_ dirtyRect: NSRect) {
+        guard !providers.isEmpty else { return }
         let sectionGap: CGFloat = 2
-        let providerWidth = max((bounds.width - sectionGap) / 2, 0)
+        let totalGap = sectionGap * CGFloat(max(providers.count - 1, 0))
+        let providerWidth = max((bounds.width - totalGap) / CGFloat(providers.count), 0)
         for (idx, provider) in providers.enumerated() {
             let originX = CGFloat(idx) * (providerWidth + sectionGap)
             drawProvider(x: originX, width: providerWidth, provider: provider)
@@ -163,24 +170,29 @@ final class CombinedBarView: NSView {
         let timeRowH: CGFloat = 3.0
         let timeRowGap: CGFloat = 1.0
         let hasCycle = provider.cycleTotalDots > 0
-        let hasTimeRow = provider.windowTimePct != nil
+        let hasTimeRow = provider.hasTopBar && provider.windowTimePct != nil
+        let reservesTimeRow = hasTimeRow || !provider.hasTopBar
         var totalH = barH * 2 + barGap
         if hasCycle { totalH += cycleGap + dotSize }
-        if hasTimeRow { totalH += timeRowGap + timeRowH }
+        if reservesTimeRow { totalH += timeRowGap + timeRowH }
         let baseY = (bounds.height - totalH) / 2
         let barWidth = max(width - inset * 2, 0)
         let bottomBarY = hasCycle ? (baseY + dotSize + cycleGap) : baseY
-        let timeRowY = hasTimeRow ? (bottomBarY + barH + barGap) : bottomBarY
-        let topBarY = hasTimeRow ? (timeRowY + timeRowH + timeRowGap) : (bottomBarY + barH + barGap)
+        let timeRowY = reservesTimeRow ? (bottomBarY + barH + barGap) : bottomBarY
+        let topBarY = reservesTimeRow ? (timeRowY + timeRowH + timeRowGap) : (bottomBarY + barH + barGap)
 
         NSColor.white.withAlphaComponent(0.96).setFill()
-        fill(x: x + inset, y: topBarY, w: barWidth, h: barH)
+        if provider.hasTopBar {
+            fill(x: x + inset, y: topBarY, w: barWidth, h: barH)
+        }
         fill(x: x + inset, y: bottomBarY, w: barWidth, h: barH)
 
-        NSColor.black.withAlphaComponent(0.92).setFill()
-        fill(x: x + inset, y: topBarY, w: barWidth * min(provider.topPct, 1), h: barH)
+        if provider.hasTopBar {
+            barFillColor(for: provider.topAlertLevel).setFill()
+            fill(x: x + inset, y: topBarY, w: barWidth * min(provider.topPct, 1), h: barH)
+        }
 
-        NSColor.black.withAlphaComponent(0.92).setFill()
+        barFillColor(for: provider.bottomAlertLevel).setFill()
         fill(x: x + inset, y: bottomBarY, w: barWidth * min(provider.bottomPct, 1), h: barH)
 
         if hasTimeRow, let pct = provider.windowTimePct {
@@ -205,6 +217,14 @@ final class CombinedBarView: NSView {
                 provider: provider,
                 dotSize: dotSize
             )
+        }
+    }
+
+    private func barFillColor(for level: AlertLevel) -> NSColor {
+        switch level {
+        case .critical: return NSColor.systemRed.withAlphaComponent(0.88)
+        case .warning:  return NSColor.systemYellow.withAlphaComponent(0.92)
+        case .none:     return NSColor.black.withAlphaComponent(0.92)
         }
     }
 
@@ -264,6 +284,8 @@ final class ProviderStatusController {
 
     private let openTitle: String
     private let sectionTitle: String
+    private let primaryDisplayLabel: String?
+    private let secondaryDisplayLabel: String
     private var primaryMenuItem: NSMenuItem!
     private var secondaryMenuItem: NSMenuItem!
     private var openUsageMenuItem: NSMenuItem!
@@ -274,11 +296,13 @@ final class ProviderStatusController {
     private var lastReportPath: String?
     private var currentData: MenubarData?
 
-    init(dataURL: URL, weeklyResetCacheURL: URL? = nil, openTitle: String, sectionTitle: String, fallbackBuildCommand: String, theme: ProviderTheme, usagePageURL: URL? = nil, apiCreditURL: URL? = nil, accuracyURL: URL? = nil) {
+    init(dataURL: URL, weeklyResetCacheURL: URL? = nil, openTitle: String, sectionTitle: String, fallbackBuildCommand: String, theme: ProviderTheme, usagePageURL: URL? = nil, apiCreditURL: URL? = nil, accuracyURL: URL? = nil, primaryDisplayLabel: String? = "5 hour", secondaryDisplayLabel: String = "weekly") {
         self.dataURL = dataURL
         self.weeklyResetCacheURL = weeklyResetCacheURL
         self.openTitle = openTitle
         self.sectionTitle = sectionTitle
+        self.primaryDisplayLabel = primaryDisplayLabel
+        self.secondaryDisplayLabel = secondaryDisplayLabel
         self.fallbackBuildCommand = fallbackBuildCommand
         self.theme = theme
         self.usagePageURL = usagePageURL
@@ -291,6 +315,7 @@ final class ProviderStatusController {
 
         primaryMenuItem = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
         primaryMenuItem.isEnabled = false
+        primaryMenuItem.isHidden = primaryDisplayLabel == nil
         menu.addItem(primaryMenuItem)
 
         secondaryMenuItem = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
@@ -383,8 +408,10 @@ final class ProviderStatusController {
         guard let jsonData = try? Data(contentsOf: dataURL),
               let data = try? JSONDecoder().decode(MenubarData.self, from: jsonData) else {
             currentData = nil
-            primaryMenuItem.title = "No data (run \(fallbackBuildCommand))"
-            secondaryMenuItem.title = "Waiting for metrics"
+            if primaryDisplayLabel != nil {
+                primaryMenuItem.title = "No data (run \(fallbackBuildCommand))"
+            }
+            secondaryMenuItem.title = "\(secondaryDisplayLabel) - no data yet"
             openMenuItem.isEnabled = false
             return
         }
@@ -401,15 +428,30 @@ final class ProviderStatusController {
         let cycle = resolvedWeeklyCycle()
         let cycleTotalDots = cycle?.totalDots ?? 0
         let cycleActiveDots = cycle?.activeDots ?? 0
+        let wTimePct = windowTimePct(for: primary)
+        let weekProgress: Double? = cycleTotalDots > 0
+            ? Double(cycleActiveDots) / Double(cycleTotalDots)
+            : nil
+        let topAlert = alertLevel(usedPct: Double(primaryPct), timePct: wTimePct.map(Double.init))
+        let bottomAlert = alertLevel(usedPct: Double(secondaryPct), timePct: weekProgress)
         return CombinedBarView.ProviderBars(
+            hasTopBar: primary != nil,
             topPct: primaryPct,
             bottomPct: secondaryPct,
             topIsRemaining: primary?.isRemaining ?? false,
-            windowTimePct: windowTimePct(for: primary),
+            windowTimePct: wTimePct,
             cycleActiveDots: cycleActiveDots,
             cycleTotalDots: cycleTotalDots,
-            theme: theme
+            theme: theme,
+            topAlertLevel: topAlert,
+            bottomAlertLevel: bottomAlert
         )
+    }
+
+    private func alertLevel(usedPct: Double, timePct: Double?) -> CombinedBarView.AlertLevel {
+        if usedPct >= 0.95 { return .critical }
+        if let t = timePct, usedPct > t { return .warning }
+        return .none
     }
 
     private func windowTimePct(for metric: MenubarData.MetricData?) -> CGFloat? {
@@ -430,21 +472,24 @@ final class ProviderStatusController {
     }
 
     private func updateDisplay(data: MenubarData) {
-        if let metric = data.resolvedPrimary, let pct = metric.pct {
-            primaryMenuItem.title = formatMetric(label: "5 hour", metric: metric, pct: pct)
-        } else {
-            primaryMenuItem.title = "5 hour - no data yet"
+        if let primaryDisplayLabel {
+            if let metric = data.resolvedPrimary, let pct = metric.pct {
+                primaryMenuItem.title = formatMetric(label: primaryDisplayLabel, metric: metric, pct: pct)
+            } else {
+                primaryMenuItem.title = "\(primaryDisplayLabel) - no data yet"
+            }
         }
 
         if let metric = data.resolvedSecondary, let pct = metric.pct {
             secondaryMenuItem.title = formatMetric(
-                label: "weekly",
+                label: secondaryDisplayLabel,
                 metric: metric,
                 pct: pct,
-                fallbackResetEpoch: resolvedWeeklyCycle()?.resetEpoch
+                fallbackResetEpoch: resolvedWeeklyCycle()?.resetEpoch,
+                includeResetDate: true
             )
         } else {
-            secondaryMenuItem.title = "weekly - no data yet"
+            secondaryMenuItem.title = "\(secondaryDisplayLabel) - no data yet"
         }
 
         if let spent = data.extraSpent {
@@ -460,12 +505,12 @@ final class ProviderStatusController {
         }
     }
 
-    private func formatResetTime(_ epoch: Double) -> String {
+    private func formatResetTime(_ epoch: Double, includeDate: Bool) -> String {
         let date = Date(timeIntervalSince1970: epoch)
         let formatter = DateFormatter()
         formatter.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "h:mm a"
+        formatter.dateFormat = includeDate ? "MMM d, h:mm a" : "h:mm a"
         return formatter.string(from: date)
     }
 
@@ -473,7 +518,8 @@ final class ProviderStatusController {
         label: String,
         metric: MenubarData.MetricData,
         pct: Double,
-        fallbackResetEpoch: Double? = nil
+        fallbackResetEpoch: Double? = nil,
+        includeResetDate: Bool = false
     ) -> String {
         let usedFraction = metric.isRemaining == true ? 1 - pct : pct
         let usedPct = Int((max(0, min(1, usedFraction)) * 100).rounded())
@@ -483,7 +529,7 @@ final class ProviderStatusController {
             .compactMap { $0 }
             .first { $0 > now }
         if let resetEpoch {
-            return "\(label) - \(usedPct)% used (\(leftPct)% left, window resets at \(formatResetTime(resetEpoch)))"
+            return "\(label) - \(usedPct)% used (\(leftPct)% left, window resets at \(formatResetTime(resetEpoch, includeDate: includeResetDate)))"
         }
         return "\(label) - \(usedPct)% used (\(leftPct)% left)"
     }
@@ -491,6 +537,9 @@ final class ProviderStatusController {
     private func resolvedWeeklyCycle() -> MenubarData.WeeklyCycleData? {
         if let cycle = currentData?.weeklyCycle {
             return normalizedWeeklyCycle(cycle)
+        }
+        if let resetEpoch = currentData?.resolvedSecondary?.endEpoch {
+            return buildWeeklyCycle(resetEpoch: resetEpoch)
         }
         guard let resetEpoch = readFallbackResetEpoch() else { return nil }
         return buildWeeklyCycle(resetEpoch: resetEpoch)
@@ -600,11 +649,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let buildQueue = DispatchQueue(label: "agentic-tool-usage-tracker.menubar-build")
     private var claudeBuildInFlight = false
     private var codexBuildInFlight = false
+    private var antigravityBuildInFlight = false
 
     private var barItemWidth: CGFloat {
         get {
             let stored = UserDefaults.standard.double(forKey: "barItemWidth")
-            return stored > 0 ? CGFloat(stored) : NSStatusBar.system.thickness
+            return stored > 0 ? CGFloat(stored) : 60
         }
         set { UserDefaults.standard.set(Double(newValue), forKey: "barItemWidth") }
     }
@@ -620,8 +670,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .appendingPathComponent(".claude/statusline-rate-limits.json")
     private static let codexDataURL = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".codex/codex-tracker-menubar.json")
+    private static let antigravityDataURL = URL(fileURLWithPath: NSHomeDirectory())
+        .appendingPathComponent(".gemini/antigravity-cli/antigravity-tracker-menubar.json")
     private static let claudeBuildScriptURL = repoRootURL.appendingPathComponent("claude/scripts/build.js")
     private static let codexBuildScriptURL = repoRootURL.appendingPathComponent("codex/scripts/build.js")
+    private static let antigravityBuildScriptURL = repoRootURL.appendingPathComponent("antigravity/scripts/build.js")
     private static let claudeAccuracyURL = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".claude/claude-accuracy.json")
     private static let codexAccuracyURL = URL(fileURLWithPath: NSHomeDirectory())
@@ -666,6 +719,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 usagePageURL: URL(string: "https://chatgpt.com/codex/settings/usage"),
                 apiCreditURL: URL(string: "https://platform.openai.com/home"),
                 accuracyURL: Self.codexAccuracyURL
+            ),
+            ProviderStatusController(
+                dataURL: Self.antigravityDataURL,
+                openTitle: "Open Antigravity Dashboard",
+                sectionTitle: "Antigravity",
+                fallbackBuildCommand: "npm run build:antigravity",
+                theme: ProviderTheme(
+                    tint: NSColor.systemGreen.withAlphaComponent(0.72)
+                ),
+                usagePageURL: URL(string: "https://antigravity.google/"),
+                primaryDisplayLabel: nil,
+                secondaryDisplayLabel: "weekly"
             )
         ]
 
@@ -762,6 +827,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshFromDataFiles()
         refreshClaudeMenubarData()
         refreshCodexMenubarData()
+        refreshAntigravityMenubarData()
     }
 
     private func refreshFromDataFiles() {
@@ -791,6 +857,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.runMenubarBuild(scriptURL: Self.codexBuildScriptURL)
             DispatchQueue.main.async { [weak self] in
                 self?.codexBuildInFlight = false
+                self?.refreshFromDataFiles()
+            }
+        }
+    }
+
+    private func refreshAntigravityMenubarData() {
+        guard !antigravityBuildInFlight else { return }
+        guard FileManager.default.fileExists(atPath: Self.antigravityBuildScriptURL.path) else { return }
+        antigravityBuildInFlight = true
+        buildQueue.async { [weak self] in
+            self?.runMenubarBuild(scriptURL: Self.antigravityBuildScriptURL)
+            DispatchQueue.main.async { [weak self] in
+                self?.antigravityBuildInFlight = false
                 self?.refreshFromDataFiles()
             }
         }
