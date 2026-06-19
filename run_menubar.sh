@@ -16,5 +16,6 @@ fi
 
 "$NODE_BIN" "$ROOT/claude/scripts/build.js" >/dev/null 2>&1 || true
 "$NODE_BIN" "$ROOT/codex/scripts/build.js" >/dev/null 2>&1 || true
+"$NODE_BIN" "$ROOT/antigravity/scripts/build.js" >/dev/null 2>&1 || true
 
 exec "$MENUBAR_BIN"

@@ -1,8 +1,8 @@
 # Agentic Tool Usage Tracker
 
-A self-hosted dashboard that tracks Claude Code and OpenAI Codex usage, token consumption, and estimated API-equivalent costs. Runs entirely locally — a Python hook logs events, a Node.js build script processes data, and a single HTML file renders everything in the browser.
+A self-hosted dashboard that tracks Claude Code, OpenAI Codex, and Google Antigravity activity. It processes local transcripts, histories, quota signals, token consumption, and estimated API-equivalent costs.
 
-Also includes a native macOS menu bar app showing live usage bars for both providers.
+Also includes a native macOS menu bar app showing live usage bars for all providers.
 
 <img width="1400" alt="Claude Tracker — Overview tab" src="screenshots/claude-overview.png">
 
@@ -13,7 +13,8 @@ Also includes a native macOS menu bar app showing live usage bars for both provi
 - Extra credit tracking
 - Tool usage frequency (Claude Code)
 - Claude Cowork scheduled-task integration
-- Native macOS menu bar widget with usage bars for Claude and Codex
+- Antigravity prompt, conversation, project, storage, and weekly quota tracking
+- Native macOS menu bar widget with usage bars for Claude, Codex, and Antigravity
 - Self-calibrating accuracy inspector that checks estimates against the official usage pages and auto-corrects drift
 
 ## Screenshots
@@ -72,7 +73,7 @@ Replace `/path/to/ai-tools-usage-tracker` with the actual path.
 npm run build
 ```
 
-Then open `claude/report.html` or `codex/report.html` in your browser.
+Then open `claude/report.html`, `codex/report.html`, or `antigravity/report.html` in your browser.
 
 ### 4. (Optional) Build and run the menu bar app
 
@@ -90,7 +91,7 @@ Or install as a launch agent so it starts automatically at login:
 ## Usage
 
 ```bash
-npm run build          # One-shot build of both dashboards
+npm run build          # One-shot build of all dashboards
 npm run watch:claude   # Auto-rebuild Claude dashboard on file changes
 npm test               # Run all tests
 npm run menubar        # Start menu bar app (must be built first)
@@ -98,7 +99,7 @@ npm run menubar:build  # Build menu bar app
 npm run menubar:restart # Restart the launchd-managed menu bar app
 ```
 
-Open `claude/report.html` or `codex/report.html` in any browser after building.
+Open any provider's `report.html` in a browser after building.
 
 ## Configuration
 

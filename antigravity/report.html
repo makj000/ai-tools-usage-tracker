@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
+<title>Antigravity Tracker</title>
+<style>
+  :root {
+    --ink: #17211c;
+    --muted: #68756d;
+    --paper: #f5f2e8;
+    --panel: rgba(255, 254, 248, 0.82);
+    --line: rgba(23, 33, 28, 0.16);
+    --lime: #85a832;
+    --green: #1e6a4b;
+    --orange: #c45d24;
+    --shadow: 0 18px 50px rgba(31, 42, 35, 0.10);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--ink);
+    font: 14px/1.45 "Avenir Next", "Gill Sans", sans-serif;
+    background:
+      radial-gradient(circle at 12% 5%, rgba(133,168,50,.24), transparent 28%),
+      radial-gradient(circle at 88% 0%, rgba(196,93,36,.16), transparent 26%),
+      linear-gradient(145deg, #faf8ef, #ebe7d9);
+  }
+  header { padding: 30px 30px 20px; display: flex; justify-content: space-between; align-items: end; gap: 18px; }
+  h1 { margin: 0; font-size: 30px; letter-spacing: -.04em; }
+  .subtitle, .muted { color: var(--muted); }
+  .page { padding: 0 30px 30px; display: grid; grid-template-columns: 240px 1fr; gap: 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow); backdrop-filter: blur(12px); }
+  .sidebar { padding: 18px; align-self: start; position: sticky; top: 20px; }
+  .content { display: grid; gap: 20px; }
+  .section { padding: 20px; }
+  h2 { margin: 0 0 14px; font-size: 12px; text-transform: uppercase; letter-spacing: .16em; color: var(--muted); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 12px; }
+  .stat, .item { padding: 14px; border: 1px solid var(--line); border-radius: 15px; background: rgba(255,255,255,.64); }
+  .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+  .value { margin-top: 6px; font-size: 25px; font-weight: 700; color: var(--green); }
+  .list { display: grid; gap: 10px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; }
+  .name { font-weight: 700; color: var(--green); overflow: hidden; text-overflow: ellipsis; }
+  .prompt { margin-top: 7px; white-space: pre-wrap; word-break: break-word; }
+  .meta { margin-top: 6px; color: var(--muted); font-size: 12px; }
+  .chart { display: grid; grid-template-columns: repeat(auto-fit, minmax(52px, 1fr)); gap: 8px; align-items: end; }
+  .bar-wrap { height: 120px; display: flex; align-items: end; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: rgba(30,106,75,.06); }
+  .bar { width: 100%; background: linear-gradient(180deg, var(--lime), var(--green)); }
+  .bar-label { margin-top: 5px; text-align: center; color: var(--muted); font-size: 11px; }
+  .quota { border-left: 5px solid var(--orange); }
+  .quota.ok { border-left-color: var(--lime); }
+  @media (max-width: 900px) {
+    .page { grid-template-columns: 1fr; }
+    .sidebar { position: static; }
+    header { align-items: start; flex-direction: column; }
+  }
+</style>
+<script>document.write('<scr' + 'ipt src="data/data.js?t=' + Date.now() + '"></scr' + 'ipt>');</script>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Antigravity Tracker</h1>
+    <div class="subtitle">Local activity from <code>~/.gemini/antigravity-cli</code></div>
+  </div>
+  <div class="muted" id="generatedAt">Waiting for data...</div>
+</header>
+<div class="page">
+  <aside class="panel sidebar">
+    <h2>Top Projects</h2>
+    <div id="projects" class="list"></div>
+  </aside>
+  <main class="content">
+    <section class="panel section"><h2>Overview</h2><div id="stats" class="stats"></div></section>
+    <section class="panel section"><h2>Quota</h2><div id="quota"></div></section>
+    <section class="panel section"><h2>Daily Activity</h2><div id="chart" class="chart"></div></section>
+    <section class="panel section"><h2>Recent Prompts</h2><div id="prompts" class="list"></div></section>
+  </main>
+</div>
+<script>
+function number(value) { return new Intl.NumberFormat('en-US').format(value || 0); }
+function bytes(value) { return `${(value / 1024 / 1024).toFixed(1)} MB`; }
+function date(value) { return new Date(value).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[char]);
+}
+function render() {
+  const data = window.TRACKER_DATA;
+  if (!data) { document.body.innerHTML = '<div class="muted">Run <code>npm run build:antigravity</code>.</div>'; return; }
+  document.getElementById('generatedAt').textContent = `Generated ${date(data.generatedAt)}`;
+  const overview = data.overview;
+  const stats = [
+    ['Prompts', overview.promptCount],
+    ['Conversations', overview.conversationCount],
+    ['Projects', overview.projectCount],
+    ['Active Days', overview.activeDays],
+    ['Local Databases', overview.databaseCount],
+    ['Stored Data', bytes(overview.databaseBytes)],
+  ];
+  document.getElementById('stats').innerHTML = stats.map(([label, value]) => `<div class="stat"><div class="label">${label}</div><div class="value">${typeof value === 'number' ? number(value) : value}</div></div>`).join('');
+  const quota = data.quota;
+  document.getElementById('quota').innerHTML = quota.exhausted
+    ? `<div class="item quota"><div class="name">Weekly quota exhausted</div><div class="meta">Resets ${date(quota.resetEpoch * 1000)}</div></div>`
+    : '<div class="item quota ok"><div class="name">No active quota error</div><div class="meta">Antigravity does not expose a live percentage locally before exhaustion.</div></div>';
+  const points = data.daily.slice(-21);
+  const max = Math.max(...points.map((point) => point.prompts), 1);
+  document.getElementById('chart').innerHTML = points.map((point) => `<div title="${point.date}: ${point.prompts} prompts"><div class="bar-wrap"><div class="bar" style="height:${Math.max(point.prompts / max * 100, 5)}%"></div></div><div class="bar-label">${point.date.slice(5)}</div></div>`).join('');
+  document.getElementById('projects').innerHTML = data.projects.slice(0, 12).map((project) => `<div class="item"><div class="row"><div class="name">${escapeHtml(project.shortProject)}</div><strong>${project.prompts}</strong></div><div class="meta">${project.conversationCount} conversations</div></div>`).join('');
+  document.getElementById('prompts').innerHTML = data.recentPrompts.slice(0, 30).map((prompt) => `<div class="item"><div class="row"><div class="name">${escapeHtml(prompt.shortProject)}</div><div class="muted">${date(prompt.timestamp)}</div></div><div class="prompt">${escapeHtml(prompt.text)}</div></div>`).join('');
+}
+render();
+</script>
+</body>
+</html>

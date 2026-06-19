@@ -1075,14 +1075,13 @@ function applyUsageConfig(config, windowUsage, tokens) {
   }
 }
 
-function writeMenubarJson(wu, totals, extraTotals, extraPurchasedSeed) {
-  try {
-    const rateLimits = readStatuslineRateLimits();
+function buildMenubarData(wu, extraTotals, extraPurchasedSeed, options = {}) {
+  const rateLimits = options.rateLimits ?? readStatuslineRateLimits();
     // Treat cached pct as stale once the window's resets_at is in the past:
     // Claude Code repopulates this cache only on its next API call, so after a
     // window rollover the pct lingers at the previous (often near-full) value
     // until traffic resumes.
-    const nowSec = Math.floor(Date.now() / 1000);
+    const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
     const fiveHourResetsAt = rateLimits?.five_hour?.resets_at;
     const sevenDayResetsAt = rateLimits?.seven_day?.resets_at;
     const fiveHourFresh = typeof fiveHourResetsAt === "number" && fiveHourResetsAt > nowSec;
@@ -1127,11 +1126,11 @@ function writeMenubarJson(wu, totals, extraTotals, extraPurchasedSeed) {
       ceilingDisplay: wu.weekly.ceiling != null ? `$${wu.weekly.ceiling.toFixed(2)}` : null,
       isRemaining: false,
     } : null;
-    const todayDate = wu?.daily?.date || laDateStrFromEpochSeconds(Math.floor(Date.now() / 1000));
+    const todayDate = wu?.daily?.date || laDateStrFromEpochSeconds(nowSec);
     const weeklyCycle = todayDate
       ? buildWeeklyCycleFromReset(todayDate, weeklyResetEpoch)
       : null;
-    const out = {
+    return {
       updatedAt: new Date().toISOString(),
       title: "Claude",
       reportPath: path.resolve(ROOT, "report.html"),
@@ -1145,6 +1144,11 @@ function writeMenubarJson(wu, totals, extraTotals, extraPurchasedSeed) {
       extraSpent: typeof extraTotals?.cost === "number" ? +extraTotals.cost.toFixed(4) : null,
       extraPurchased: typeof extraPurchasedSeed === "number" ? +extraPurchasedSeed.toFixed(4) : null,
     };
+}
+
+function writeMenubarJson(wu, totals, extraTotals, extraPurchasedSeed) {
+  try {
+    const out = buildMenubarData(wu, extraTotals, extraPurchasedSeed);
     fs.writeFileSync(MENUBAR_JSON_PATH, JSON.stringify(out, null, 2));
   } catch (e) {
     console.warn("[build] could not write menubar.json:", e.message);
@@ -1249,7 +1253,7 @@ if (typeof module !== "undefined" && module.exports && require.main !== module) 
   module.exports = {
     getPricing, calcCost, zeroCounts, addCounts, slugToPath,
     isRealPrompt, extractPromptText, enrichHistory, readJsonl, toLADate,
-    applyUsageConfig,
+    applyUsageConfig, buildMenubarData,
   };
 } else {
   build();

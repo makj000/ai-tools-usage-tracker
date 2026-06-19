@@ -11,6 +11,7 @@ const os = require("os");
 const {
   getPricing, calcCost, zeroCounts, addCounts, slugToPath,
   isRealPrompt, extractPromptText, enrichHistory, readJsonl,
+  buildMenubarData,
 } = require("../scripts/build.js");
 
 let passed = 0;
@@ -332,6 +333,41 @@ test("handles empty file", () => {
   } finally {
     fs.unlinkSync(tmp);
   }
+});
+
+// ---- buildMenubarData ----
+console.log("\nbuildMenubarData");
+
+test("keeps reset times when 5h and weekly windows have usage", () => {
+  const nowSec = Math.floor(Date.parse("2026-06-19T16:00:00.000Z") / 1000);
+  const fiveHourReset = nowSec + 90 * 60;
+  const weeklyReset = nowSec + 3 * 24 * 60 * 60;
+  const data = buildMenubarData(null, { cost: 12.34567 }, 20, {
+    nowSec,
+    rateLimits: {
+      five_hour: { used_percentage: 34, resets_at: fiveHourReset },
+      seven_day: { used_percentage: 57, resets_at: weeklyReset },
+    },
+  });
+
+  assert.strictEqual(data.primaryLabel, "5h used");
+  assert.strictEqual(data.primary.usageDisplay, "34% used");
+  assert.strictEqual(data.primary.pct, 0.34);
+  assert.strictEqual(data.primary.startEpoch, fiveHourReset - 5 * 3600);
+  assert.strictEqual(data.primary.endEpoch, fiveHourReset);
+  assert.match(data.primary.detail, /^resets /);
+  assert.strictEqual(data.primary.isRemaining, false);
+  assert.strictEqual(data.secondaryLabel, "Week used");
+  assert.strictEqual(data.secondary.usageDisplay, "57% used");
+  assert.strictEqual(data.secondary.pct, 0.57);
+  assert.strictEqual(data.secondary.endEpoch, weeklyReset);
+  assert.match(data.secondary.detail, /^resets /);
+  assert.strictEqual(data.secondary.isRemaining, false);
+  assert.strictEqual(data.weeklyCycle.totalDots, 7);
+  assert(data.weeklyCycle.activeDots >= 1);
+  assert.strictEqual(data.weeklyCycle.resetEpoch, weeklyReset);
+  assert.strictEqual(data.extraSpent, 12.3457);
+  assert.strictEqual(data.extraPurchased, 20);
 });
 
 // ---- Summary ----

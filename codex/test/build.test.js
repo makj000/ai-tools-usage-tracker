@@ -169,5 +169,47 @@ test("shows 5h and weekly window ends when current usage is zero", () => {
   assert.match(data.secondary.detail, /^resets /);
 });
 
+test("keeps reset times when 5h and weekly windows have nonzero usage", () => {
+  const nowSec = Math.floor(Date.parse("2026-06-19T16:00:00.000Z") / 1000);
+  const primaryResetEpoch = nowSec + 90 * 60;
+  const secondaryResetEpoch = nowSec + 3 * 24 * 60 * 60;
+  const data = buildMenubarData([], {
+    nowSec,
+    rateLimits: {
+      primary: { used_percent: 34, resets_at: primaryResetEpoch },
+      secondary: { used_percent: 57, resets_at: secondaryResetEpoch },
+    },
+  });
+
+  assert.strictEqual(data.primaryLabel, "5h left");
+  assert.strictEqual(data.primary.usageDisplay, "66% left");
+  assert(Math.abs(data.primary.pct - 0.66) < 0.000001);
+  assert.strictEqual(data.primary.endEpoch, primaryResetEpoch);
+  assert.match(data.primary.detail, /^resets /);
+  assert.strictEqual(data.primary.isRemaining, true);
+  assert.strictEqual(data.secondaryLabel, "Week left");
+  assert.strictEqual(data.secondary.usageDisplay, "43% left");
+  assert(Math.abs(data.secondary.pct - 0.43) < 0.000001);
+  assert.strictEqual(data.secondary.endEpoch, secondaryResetEpoch);
+  assert.match(data.secondary.detail, /^resets /);
+  assert.strictEqual(data.secondary.isRemaining, true);
+});
+
+test("projects a stale 5h reset forward so the menu still has a window end", () => {
+  const nowSec = Math.floor(Date.parse("2026-06-19T16:30:00.000Z") / 1000);
+  const staleResetEpoch = Math.floor(Date.parse("2026-06-19T12:00:00.000Z") / 1000);
+  const data = buildMenubarData([], {
+    nowSec,
+    rateLimits: {
+      primary: { used_percent: 44, resets_at: staleResetEpoch },
+      secondary: null,
+    },
+  });
+
+  assert.strictEqual(data.primary.endEpoch, Math.floor(Date.parse("2026-06-19T17:00:00.000Z") / 1000));
+  assert.strictEqual(data.primary.startEpoch, Math.floor(Date.parse("2026-06-19T12:00:00.000Z") / 1000));
+  assert.match(data.primary.detail, /^resets /);
+});
+
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

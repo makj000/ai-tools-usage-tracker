@@ -6,6 +6,7 @@ claude/data/events-*.jsonl
 codex/data/data.js
 codex/data/events.jsonl
 codex/data/events-*.jsonl
+antigravity/data/data.js
 .env
 .claude/settings.local.json
 .build-cache/
