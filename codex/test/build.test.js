@@ -157,16 +157,18 @@ test("shows 5h and weekly window ends when current usage is zero", () => {
     },
   });
 
-  assert.strictEqual(data.primaryLabel, "5h left");
-  assert.strictEqual(data.primary.usageDisplay, "100% left");
-  assert.strictEqual(data.primary.pct, 1);
+  assert.strictEqual(data.primaryLabel, "5h used");
+  assert.strictEqual(data.primary.usageDisplay, "0% used");
+  assert.strictEqual(data.primary.pct, 0);
   assert.strictEqual(data.primary.endEpoch, primaryResetEpoch);
   assert.match(data.primary.detail, /^resets /);
-  assert.strictEqual(data.secondaryLabel, "Week left");
-  assert.strictEqual(data.secondary.usageDisplay, "100% left");
-  assert.strictEqual(data.secondary.pct, 1);
+  assert.strictEqual(data.primary.isRemaining, false);
+  assert.strictEqual(data.secondaryLabel, "Week used");
+  assert.strictEqual(data.secondary.usageDisplay, "0% used");
+  assert.strictEqual(data.secondary.pct, 0);
   assert.strictEqual(data.secondary.endEpoch, secondaryResetEpoch);
   assert.match(data.secondary.detail, /^resets /);
+  assert.strictEqual(data.secondary.isRemaining, false);
 });
 
 test("keeps reset times when 5h and weekly windows have nonzero usage", () => {
@@ -181,18 +183,18 @@ test("keeps reset times when 5h and weekly windows have nonzero usage", () => {
     },
   });
 
-  assert.strictEqual(data.primaryLabel, "5h left");
-  assert.strictEqual(data.primary.usageDisplay, "66% left");
-  assert(Math.abs(data.primary.pct - 0.66) < 0.000001);
+  assert.strictEqual(data.primaryLabel, "5h used");
+  assert.strictEqual(data.primary.usageDisplay, "34% used");
+  assert(Math.abs(data.primary.pct - 0.34) < 0.000001);
   assert.strictEqual(data.primary.endEpoch, primaryResetEpoch);
   assert.match(data.primary.detail, /^resets /);
-  assert.strictEqual(data.primary.isRemaining, true);
-  assert.strictEqual(data.secondaryLabel, "Week left");
-  assert.strictEqual(data.secondary.usageDisplay, "43% left");
-  assert(Math.abs(data.secondary.pct - 0.43) < 0.000001);
+  assert.strictEqual(data.primary.isRemaining, false);
+  assert.strictEqual(data.secondaryLabel, "Week used");
+  assert.strictEqual(data.secondary.usageDisplay, "57% used");
+  assert(Math.abs(data.secondary.pct - 0.57) < 0.000001);
   assert.strictEqual(data.secondary.endEpoch, secondaryResetEpoch);
   assert.match(data.secondary.detail, /^resets /);
-  assert.strictEqual(data.secondary.isRemaining, true);
+  assert.strictEqual(data.secondary.isRemaining, false);
 });
 
 test("projects a stale 5h reset forward so the menu still has a window end", () => {

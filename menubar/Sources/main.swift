@@ -223,7 +223,7 @@ final class CombinedBarView: NSView {
     private func barFillColor(for level: AlertLevel) -> NSColor {
         switch level {
         case .critical: return NSColor.systemRed.withAlphaComponent(0.88)
-        case .warning:  return NSColor.systemYellow.withAlphaComponent(0.92)
+        case .warning:  return NSColor.systemOrange.withAlphaComponent(0.95)
         case .none:     return NSColor.black.withAlphaComponent(0.92)
         }
     }

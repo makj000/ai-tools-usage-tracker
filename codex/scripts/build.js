@@ -466,8 +466,8 @@ function buildMenubarData(daily, options = {}) {
   const primaryLabelFallback = carryEntry
     ? (carryEntry.date === shiftDateStr(todayDate, -1) ? "Yesterday" : "Recent")
     : "Today";
-  const primaryRemainingPct = hasPrimaryRateLimit ? Math.max(0, Math.min(1, 1 - primaryUsedPercent / 100)) : Math.min(displayDayUsage / dailyCeiling, 1);
-  const secondaryRemainingPct = hasSecondaryRateLimit ? Math.max(0, Math.min(1, 1 - secondaryUsedPercent / 100)) : Math.min(weeklyUsage / weeklyCeiling, 1);
+  const primaryPct = hasPrimaryRateLimit ? Math.max(0, Math.min(1, primaryUsedPercent / 100)) : Math.min(displayDayUsage / dailyCeiling, 1);
+  const secondaryPct = hasSecondaryRateLimit ? Math.max(0, Math.min(1, secondaryUsedPercent / 100)) : Math.min(weeklyUsage / weeklyCeiling, 1);
 
   // Always compute a projected 5h window for the time-progress bar.
   // If the last known reset is still in the future, use it directly.
@@ -491,13 +491,13 @@ function buildMenubarData(daily, options = {}) {
     updatedAt: new Date().toISOString(),
     title: "Codex",
     reportPath: path.resolve(ROOT, "report.html"),
-    primaryLabel: hasPrimaryRateLimit ? "5h left" : primaryLabelFallback,
-    secondaryLabel: hasSecondaryRateLimit ? "Week left" : "7 Days",
+    primaryLabel: hasPrimaryRateLimit ? "5h used" : primaryLabelFallback,
+    secondaryLabel: hasSecondaryRateLimit ? "Week used" : "7 Days",
     primary: {
-      usage: hasPrimaryRateLimit ? Math.round(primaryRemainingPct * 100) : displayDayUsage,
+      usage: hasPrimaryRateLimit ? Math.round(primaryPct * 100) : displayDayUsage,
       ceiling: hasPrimaryRateLimit ? 100 : dailyCeiling,
-      pct: primaryRemainingPct,
-      usageDisplay: hasPrimaryRateLimit ? `${Math.round(primaryRemainingPct * 100)}% left` : `${compactNumber(displayDayUsage)} tok`,
+      pct: primaryPct,
+      usageDisplay: hasPrimaryRateLimit ? `${Math.round(primaryPct * 100)}% used` : `${compactNumber(displayDayUsage)} tok`,
       ceilingDisplay: hasPrimaryRateLimit ? null : `${compactNumber(dailyCeiling)} tok`,
       detail: hasPrimaryRateLimit
         ? formatResetDetail(rateLimits?.primary?.resets_at)
@@ -508,17 +508,17 @@ function buildMenubarData(daily, options = {}) {
             : `${displayDayPrompts} prompts`,
       startEpoch: projectedWindowStart,
       endEpoch: projectedWindowEnd,
-      isRemaining: hasPrimaryRateLimit || null,
+      isRemaining: false,
     },
     secondary: {
-      usage: hasSecondaryRateLimit ? Math.round(secondaryRemainingPct * 100) : weeklyUsage,
+      usage: hasSecondaryRateLimit ? Math.round(secondaryPct * 100) : weeklyUsage,
       ceiling: hasSecondaryRateLimit ? 100 : weeklyCeiling,
-      pct: secondaryRemainingPct,
-      usageDisplay: hasSecondaryRateLimit ? `${Math.round(secondaryRemainingPct * 100)}% left` : `${compactNumber(weeklyUsage)} tok`,
+      pct: secondaryPct,
+      usageDisplay: hasSecondaryRateLimit ? `${Math.round(secondaryPct * 100)}% used` : `${compactNumber(weeklyUsage)} tok`,
       ceilingDisplay: hasSecondaryRateLimit ? null : `${compactNumber(weeklyCeiling)} tok`,
       detail: hasSecondaryRateLimit ? formatResetDetail(rateLimits?.secondary?.resets_at) : `${weeklyPromptCount} prompts`,
       endEpoch: Number.isInteger(rateLimits?.secondary?.resets_at) && rateLimits.secondary.resets_at > nowSec ? rateLimits.secondary.resets_at : null,
-      isRemaining: hasSecondaryRateLimit || null,
+      isRemaining: false,
     },
     weeklyCycle: buildWeeklyCycle(todayDate, rateLimits?.secondary?.resets_at),
   };
