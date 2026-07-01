@@ -145,6 +145,28 @@ final class CombinedBarView: NSView {
     }
 
     var providers: [ProviderBars] = []
+    var onMouseEntered: (() -> Void)?
+    var onMouseExited: (() -> Void)?
+    private var trackingAreaRef: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        if let trackingAreaRef {
+            removeTrackingArea(trackingAreaRef)
+        }
+        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways, .inVisibleRect]
+        let trackingArea = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
+        addTrackingArea(trackingArea)
+        trackingAreaRef = trackingArea
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onMouseEntered?()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onMouseExited?()
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         guard !providers.isEmpty else { return }
@@ -505,6 +527,30 @@ final class ProviderStatusController {
         }
     }
 
+    func hoverSummaryLines() -> [String] {
+        var lines: [String] = []
+        if let primaryDisplayLabel {
+            if let metric = currentData?.resolvedPrimary, let pct = metric.pct {
+                lines.append("\(sectionTitle) \(primaryDisplayLabel): \(formatMetricPercent(metric: metric, pct: pct))")
+            } else {
+                lines.append("\(sectionTitle) \(primaryDisplayLabel): no data")
+            }
+        }
+        if let metric = currentData?.resolvedSecondary, let pct = metric.pct {
+            lines.append("\(sectionTitle) \(secondaryDisplayLabel): \(formatMetricPercent(metric: metric, pct: pct))")
+        } else {
+            lines.append("\(sectionTitle) \(secondaryDisplayLabel): no data")
+        }
+        return lines
+    }
+
+    private func formatMetricPercent(metric: MenubarData.MetricData, pct: Double) -> String {
+        let usedFraction = metric.isRemaining == true ? 1 - pct : pct
+        let usedPct = Int((max(0, min(1, usedFraction)) * 100).rounded())
+        let leftPct = 100 - usedPct
+        return "\(usedPct)% used (\(leftPct)% left)"
+    }
+
     private func formatResetTime(_ epoch: Double, includeDate: Bool) -> String {
         let date = Date(timeIntervalSince1970: epoch)
         let formatter = DateFormatter()
@@ -640,12 +686,40 @@ final class SingleInstanceGuard {
     }
 }
 
+final class UsageHoverViewController: NSViewController {
+    init(lines: [String]) {
+        super.init(nibName: nil, bundle: nil)
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 5
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+
+        for line in lines {
+            let label = NSTextField(labelWithString: line)
+            label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+            label.textColor = .labelColor
+            label.lineBreakMode = .byTruncatingTail
+            stack.addArrangedSubview(label)
+        }
+
+        view = stack
+        view.frame = NSRect(x: 0, y: 0, width: 280, height: max(34, lines.count * 19 + 20))
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var barView: CombinedBarView!
     private var controllers: [ProviderStatusController] = []
     private var refreshTimer: Timer?
     private var barRedrawTimer: Timer?
+    private var hoverPopover: NSPopover?
+    private var hoverHideWorkItem: DispatchWorkItem?
     private let buildQueue = DispatchQueue(label: "agentic-tool-usage-tracker.menubar-build")
     private var claudeBuildInFlight = false
     private var codexBuildInFlight = false
@@ -759,6 +833,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             btn.title = ""
             barView = CombinedBarView(frame: NSRect(x: 2, y: 0, width: barW, height: NSStatusBar.system.thickness))
             barView.autoresizingMask = .height
+            barView.onMouseEntered = { [weak self] in self?.showUsageHover() }
+            barView.onMouseExited = { [weak self] in self?.scheduleHideUsageHover() }
             btn.addSubview(barView)
         }
 
@@ -834,6 +910,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controllers.forEach { $0.refresh() }
         barView.providers = controllers.map { $0.barState() }
         barView.needsDisplay = true
+        if hoverPopover?.isShown == true {
+            showUsageHover()
+        }
+    }
+
+    private func showUsageHover() {
+        hoverHideWorkItem?.cancel()
+        guard let button = statusItem.button else { return }
+        let lines = controllers.flatMap { $0.hoverSummaryLines() }
+        guard !lines.isEmpty else { return }
+
+        let popover = hoverPopover ?? NSPopover()
+        popover.behavior = .transient
+        popover.animates = false
+        popover.contentViewController = UsageHoverViewController(lines: lines)
+        hoverPopover = popover
+
+        if !popover.isShown {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+    }
+
+    private func scheduleHideUsageHover() {
+        hoverHideWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.hoverPopover?.performClose(nil)
+        }
+        hoverHideWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
     }
 
     private func refreshClaudeMenubarData() {
