@@ -547,8 +547,23 @@ final class ProviderStatusController {
     private func formatMetricPercent(metric: MenubarData.MetricData, pct: Double) -> String {
         let usedFraction = metric.isRemaining == true ? 1 - pct : pct
         let usedPct = Int((max(0, min(1, usedFraction)) * 100).rounded())
-        let leftPct = 100 - usedPct
-        return "\(usedPct)% used (\(leftPct)% left)"
+        if let timeLeft = timeLeftString(epoch: metric.endEpoch) {
+            return "\(usedPct)% used (\(timeLeft) left)"
+        }
+        return "\(usedPct)% used"
+    }
+
+    private func timeLeftString(epoch: Double?) -> String? {
+        guard let epoch else { return nil }
+        let secs = epoch - Date().timeIntervalSince1970
+        guard secs > 0 else { return nil }
+        let total = Int(secs)
+        let days  = total / 86400
+        let hours = (total % 86400) / 3600
+        let mins  = (total % 3600) / 60
+        if days > 0 { return "\(days)d \(hours)h" }
+        if hours > 0 { return "\(hours)h \(mins)m" }
+        return "\(mins)m"
     }
 
     private func formatResetTime(_ epoch: Double, includeDate: Bool) -> String {
