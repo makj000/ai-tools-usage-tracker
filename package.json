@@ -1,6 +1,6 @@
 {
   "name": "agentic-tool-usage-tracker",
-  "version": "3.47.0",
+  "version": "3.49.0",
   "description": "Track Claude Code, Codex, and Antigravity usage with local dashboards and a shared menubar app",
   "scripts": {
     "build": "npm run build:claude && npm run build:codex && npm run build:antigravity",
@@ -14,6 +14,8 @@
     "test:antigravity": "node antigravity/test/build.test.js",
     "menubar:build": "swift build -c release --package-path menubar",
     "menubar": "menubar/.build/release/ClaudeMenuBar",
-    "menubar:restart": "launchctl kickstart -k gui/$(id -u)/com.ai-tools-usage-tracker.menubar"
+    "menubar:restart": "launchctl kickstart -k gui/$(id -u)/com.ai-tools-usage-tracker.menubar",
+    "advisor": "node advisor/advisor.js --force",
+    "advisor:install": "launchctl kickstart -k gui/$(id -u)/com.ai-tools-usage-tracker.advisor"
   }
 }

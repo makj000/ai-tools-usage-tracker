@@ -11,6 +11,7 @@ mkdir -p "$TARGET_DIR" "$ROOT/logs"
 LABELS=(
   "com.ai-tools-usage-tracker.menubar"
   "com.ai-tools-usage-tracker.accuracy"
+  "com.ai-tools-usage-tracker.advisor"
 )
 
 for LABEL in "${LABELS[@]}"; do
