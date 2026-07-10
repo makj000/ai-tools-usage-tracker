@@ -11,7 +11,7 @@ const os = require("os");
 const {
   getPricing, calcCost, zeroCounts, addCounts, slugToPath,
   isRealPrompt, extractPromptText, enrichHistory, readJsonl,
-  buildMenubarData,
+  buildMenubarData, applyUsageConfig, findFableRateLimit, applyOfficialFableLimit,
 } = require("../scripts/build.js");
 
 let passed = 0;
@@ -42,6 +42,14 @@ test("returns opus pricing for opus model", () => {
   const p = getPricing("claude-opus-4-6-20260401");
   assert.strictEqual(p.input, 15.0);
   assert.strictEqual(p.output, 75.0);
+});
+
+test("returns fable pricing for fable model", () => {
+  const p = getPricing("claude-fable-5");
+  assert.strictEqual(p.input, 10.0);
+  assert.strictEqual(p.output, 50.0);
+  assert.strictEqual(p.cacheWrite, 12.50);
+  assert.strictEqual(p.cacheRead, 1.00);
 });
 
 test("returns haiku pricing for haiku model", () => {
@@ -368,6 +376,76 @@ test("keeps reset times when 5h and weekly windows have usage", () => {
   assert.strictEqual(data.weeklyCycle.resetEpoch, weeklyReset);
   assert.strictEqual(data.extraSpent, 12.3457);
   assert.strictEqual(data.extraPurchased, 20);
+});
+
+test("includes official Fable weekly metric when statusline reports one", () => {
+  const nowSec = Math.floor(Date.parse("2026-06-19T16:00:00.000Z") / 1000);
+  const weeklyReset = nowSec + 3 * 24 * 60 * 60;
+  const data = buildMenubarData(null, { cost: 0 }, null, {
+    nowSec,
+    rateLimits: {
+      five_hour: { used_percentage: 10, resets_at: nowSec + 3600 },
+      seven_day: { used_percentage: 20, resets_at: weeklyReset },
+      seven_day_fable: { used_percentage: 42, resets_at: weeklyReset },
+    },
+  });
+  assert.strictEqual(data.tertiaryLabel, "Fable 5 week");
+  assert.strictEqual(data.tertiary.usageDisplay, "42% used");
+  assert.strictEqual(data.tertiary.pct, 0.42);
+  assert.strictEqual(data.tertiary.endEpoch, weeklyReset);
+  assert.strictEqual(data.fableWeekly.pct, 0.42);
+});
+
+test("falls back to transcript-derived Fable estimate when no official field", () => {
+  const nowSec = Math.floor(Date.parse("2026-06-19T16:00:00.000Z") / 1000);
+  const wu = { fableWeekly: { usage: 7.5, ceiling: 50, pct: 0.15, week: "2026-06-13" } };
+  const data = buildMenubarData(wu, { cost: 0 }, null, { nowSec, rateLimits: null });
+  assert.strictEqual(data.tertiary.usageDisplay, "$7.50");
+  assert.strictEqual(data.tertiary.ceilingDisplay, "$50.00");
+  assert.strictEqual(data.tertiary.pct, 0.15);
+});
+
+test("omits Fable metric when there is no Fable usage and no seed", () => {
+  const nowSec = Math.floor(Date.parse("2026-06-19T16:00:00.000Z") / 1000);
+  const wu = { fableWeekly: { usage: 0, ceiling: null, pct: null, week: "2026-06-13" } };
+  const data = buildMenubarData(wu, { cost: 0 }, null, { nowSec, rateLimits: null });
+  assert.strictEqual(data.tertiary, null);
+  assert.strictEqual(data.fableWeekly, null);
+});
+
+// ---- findFableRateLimit / applyOfficialFableLimit ----
+console.log("\nfableRateLimit");
+
+test("findFableRateLimit matches any key containing fable", () => {
+  const hit = findFableRateLimit({ seven_day: {}, seven_day_fable: { used_percentage: 5 } });
+  assert.strictEqual(hit.used_percentage, 5);
+  assert.strictEqual(findFableRateLimit({ five_hour: {}, seven_day: {} }), null);
+  assert.strictEqual(findFableRateLimit(null), null);
+});
+
+test("applyOfficialFableLimit overlays fresh official pct onto windowUsage", () => {
+  const nowSec = 1_000_000;
+  const wu = { fableWeekly: { usage: 1.2, ceiling: null, pct: null } };
+  applyOfficialFableLimit(wu, { seven_day_fable: { used_percentage: 33, resets_at: nowSec + 100 } }, nowSec);
+  assert.strictEqual(wu.fableWeekly.officialPct, 33);
+  assert.strictEqual(wu.fableWeekly.resetsAt, nowSec + 100);
+});
+
+test("applyOfficialFableLimit ignores stale resets_at", () => {
+  const nowSec = 1_000_000;
+  const wu = { fableWeekly: { usage: 1.2 } };
+  applyOfficialFableLimit(wu, { seven_day_fable: { used_percentage: 33, resets_at: nowSec - 100 } }, nowSec);
+  assert.strictEqual(wu.fableWeekly.officialPct, undefined);
+});
+
+// ---- applyUsageConfig (fable seed) ----
+console.log("\napplyUsageConfig fable seed");
+
+test("fableWeeklyLimitSeed sets ceiling and pct", () => {
+  const wu = { fableWeekly: { usage: 25, ceiling: null, pct: null } };
+  applyUsageConfig({ fableWeeklyLimitSeed: 100 }, wu, { extraTotals: {} });
+  assert.strictEqual(wu.fableWeekly.ceiling, 100);
+  assert.strictEqual(wu.fableWeekly.pct, 0.25);
 });
 
 // ---- Summary ----

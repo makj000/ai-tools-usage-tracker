@@ -126,6 +126,7 @@ Optional JSON file read by build.js on every build. Supported fields:
 - `extraSpentOverride` — override the transcript-derived `extraTotals.cost` (number, USD); useful when transcript detection undercounts actual extra credit charges
 - `weeklyLimitSeed` — override the estimated weekly ceiling (number, USD); use to calibrate against the actual % shown on claude.ai's usage page: `weeklyLimitSeed = currentWeeklyUsage / claudeAiPct`; calibration history is tracked in memory (`project_weekly_calibration.md`) — always record old seed + weeklyUsage + claude.ai % before updating, to detect oscillation
 - `windowLimitSeed` — override the median-derived per-window ceiling (number, USD); use when the median is stale (old rate-limit hits from when limits were higher): `windowLimitSeed = currentWindowUsage / claudeAiWindowPct`
+- `fableWeeklyLimitSeed` — ceiling for the separate Fable 5 weekly limit (number, USD): `fableWeeklyLimitSeed = currentFableWeeklyUsage / claudeAiFablePct`; there is no rate-limit-derived estimate for this limit, so without a seed the dashboard shows only the $ figure. The official % from Claude Code's statusline cache (any `rate_limits` key containing `fable`) is preferred over the estimate wherever it's present and fresh
 
 ### Accuracy Inspector (`accuracy/`)
 

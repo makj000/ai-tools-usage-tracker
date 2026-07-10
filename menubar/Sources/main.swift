@@ -29,10 +29,13 @@ struct MenubarData: Codable {
     let reportPath: String?
     let primaryLabel: String?
     let secondaryLabel: String?
+    let tertiaryLabel: String?
     let primary: MetricData?
     let secondary: MetricData?
+    let tertiary: MetricData?
     let window: MetricData?
     let weekly: MetricData?
+    let fableWeekly: MetricData?
     let weeklyCycle: WeeklyCycleData?
     let extraSpent: Double?
     let extraPurchased: Double?
@@ -57,8 +60,10 @@ struct MenubarData: Codable {
 
     var resolvedPrimaryLabel: String { primaryLabel ?? "Window" }
     var resolvedSecondaryLabel: String { secondaryLabel ?? "Week" }
+    var resolvedTertiaryLabel: String { tertiaryLabel ?? "Fable 5 week" }
     var resolvedPrimary: MetricData? { primary ?? window }
     var resolvedSecondary: MetricData? { secondary ?? weekly }
+    var resolvedTertiary: MetricData? { tertiary ?? fableWeekly }
 }
 
 struct AccuracyStatus: Codable {
@@ -310,6 +315,7 @@ final class ProviderStatusController {
     private let secondaryDisplayLabel: String
     private var primaryMenuItem: NSMenuItem!
     private var secondaryMenuItem: NSMenuItem!
+    private var tertiaryMenuItem: NSMenuItem!
     private var openUsageMenuItem: NSMenuItem!
     private var accuracyMenuItem: NSMenuItem?
     private var extraCreditMenuItem: NSMenuItem?
@@ -335,14 +341,29 @@ final class ProviderStatusController {
     func install(into menu: NSMenu, target: AppDelegate) {
         menu.addItem(makeSectionHeaderItem(title: sectionTitle))
 
-        primaryMenuItem = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
-        primaryMenuItem.isEnabled = false
+        // Metric lines are clickable — clicking a stat opens the provider's
+        // report.html dashboard (same target as "Open … Dashboard").
+        primaryMenuItem = NSMenuItem(title: "—", action: #selector(AppDelegate.openDashboardFromMenuItem(_:)), keyEquivalent: "")
+        primaryMenuItem.target = target
+        primaryMenuItem.representedObject = self
+        primaryMenuItem.toolTip = "Open the usage dashboard (report.html)"
         primaryMenuItem.isHidden = primaryDisplayLabel == nil
         menu.addItem(primaryMenuItem)
 
-        secondaryMenuItem = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
-        secondaryMenuItem.isEnabled = false
+        secondaryMenuItem = NSMenuItem(title: "—", action: #selector(AppDelegate.openDashboardFromMenuItem(_:)), keyEquivalent: "")
+        secondaryMenuItem.target = target
+        secondaryMenuItem.representedObject = self
+        secondaryMenuItem.toolTip = "Open the usage dashboard (report.html)"
         menu.addItem(secondaryMenuItem)
+
+        // Tertiary metric (e.g. the separate Fable 5 weekly limit) — hidden
+        // until the data file actually carries one.
+        tertiaryMenuItem = NSMenuItem(title: "—", action: #selector(AppDelegate.openDashboardFromMenuItem(_:)), keyEquivalent: "")
+        tertiaryMenuItem.target = target
+        tertiaryMenuItem.representedObject = self
+        tertiaryMenuItem.toolTip = "Open the usage dashboard (report.html)"
+        tertiaryMenuItem.isHidden = true
+        menu.addItem(tertiaryMenuItem)
 
         openMenuItem = NSMenuItem(title: openTitle, action: #selector(AppDelegate.openDashboardFromMenuItem(_:)), keyEquivalent: "")
         openMenuItem.target = target
@@ -434,6 +455,7 @@ final class ProviderStatusController {
                 primaryMenuItem.title = "No data (run \(fallbackBuildCommand))"
             }
             secondaryMenuItem.title = "\(secondaryDisplayLabel) - no data yet"
+            tertiaryMenuItem.isHidden = true
             openMenuItem.isEnabled = false
             return
         }
@@ -514,6 +536,19 @@ final class ProviderStatusController {
             secondaryMenuItem.title = "\(secondaryDisplayLabel) - no data yet"
         }
 
+        if let metric = data.resolvedTertiary {
+            if let pct = metric.pct {
+                tertiaryMenuItem.title = formatMetric(label: data.resolvedTertiaryLabel, metric: metric, pct: pct, includeResetDate: true)
+            } else if let usageDisplay = metric.usageDisplay {
+                tertiaryMenuItem.title = "\(data.resolvedTertiaryLabel) - \(usageDisplay)"
+            } else {
+                tertiaryMenuItem.title = "\(data.resolvedTertiaryLabel) - no data yet"
+            }
+            tertiaryMenuItem.isHidden = false
+        } else {
+            tertiaryMenuItem.isHidden = true
+        }
+
         if let spent = data.extraSpent {
             if let purchased = data.extraPurchased {
                 let balance = max(0, purchased - spent)
@@ -540,6 +575,14 @@ final class ProviderStatusController {
             lines.append("\(sectionTitle) \(secondaryDisplayLabel): \(formatMetricPercent(metric: metric, pct: pct))")
         } else {
             lines.append("\(sectionTitle) \(secondaryDisplayLabel): no data")
+        }
+        if let data = currentData, let metric = data.resolvedTertiary {
+            if let pct = metric.pct {
+                lines.append("\(sectionTitle) \(data.resolvedTertiaryLabel): \(formatMetricPercent(metric: metric, pct: pct))")
+            } else if let usageDisplay = metric.usageDisplay {
+                // No ceiling known yet — show the raw usage figure instead of nothing.
+                lines.append("\(sectionTitle) \(data.resolvedTertiaryLabel): \(usageDisplay)")
+            }
         }
         return lines
     }

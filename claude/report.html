@@ -260,7 +260,7 @@
 
 <header>
   <h1>Claude Tracker</h1>
-  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.50.1</span>
+  <span style="font-size:10px;color:var(--muted);margin-left:-8px">v3.56.0</span>
   <span class="subtitle">Commands &amp; Token Usage</span>
   <span id="freshness" style="font-size:11px;color:var(--muted)"></span>
   <div class="header-actions">
@@ -982,7 +982,59 @@ function renderWindowGauge() {
     }
   }
 
-  // Assemble: today's windows → zoom connector → weekly
+  // Build Fable 5 weekly bar HTML — separate claude.ai limit for Fable 5.
+  // Prefers the official % reported by Claude Code (officialPct); falls back
+  // to the transcript-derived $ estimate vs fableWeeklyLimitSeed. Hidden when
+  // there's no Fable usage at all.
+  let fableBarHtml = null;
+  const fb = w.fableWeekly;
+  if (fb && (fb.officialPct != null || fb.usage > 0 || fb.ceiling)) {
+    const fmtFableReset = (sec) => new Date(sec * 1000).toLocaleString('en-US', {
+      timeZone: 'America/Los_Angeles', weekday: 'short', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
+    });
+    if (fb.officialPct != null) {
+      const pct = Math.round(Math.min(fb.officialPct, 150));
+      const barPct = Math.min(pct, 100);
+      const cls = pct < 50 ? 'low' : pct < 85 ? 'mid' : 'high';
+      const colorVar = cls === 'low' ? 'green' : cls === 'mid' ? 'accent' : 'red';
+      const reset = fb.resetsAt ? ` · resets ${fmtFableReset(fb.resetsAt)} PT` : '';
+      fableBarHtml = `<div style="margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+          <span style="font-size:12px;font-weight:600;color:var(--text)">Fable 5 Weekly</span>
+          <span style="font-size:10px;color:var(--muted)">official${reset}</span>
+        </div>
+        <div class="wg-bar-bg"><div class="wg-bar-fill ${cls}" style="width:${barPct}%"></div></div>
+        <div style="display:flex;justify-content:space-between;margin-top:2px;font-size:10px">
+          <span style="color:var(--${colorVar});font-weight:600">${pct}% used</span>
+          <span style="color:var(--muted)">est. $${(fb.usage || 0).toFixed(2)} equiv</span>
+        </div>
+      </div>`;
+    } else if (fb.ceiling) {
+      const pct = Math.round(Math.min(fb.usage / fb.ceiling, 1.5) * 100);
+      const barPct = Math.min(pct, 100);
+      const cls = pct < 50 ? 'low' : pct < 85 ? 'mid' : 'high';
+      const colorVar = cls === 'low' ? 'green' : cls === 'mid' ? 'accent' : 'red';
+      const reset = fb.resetsAt ? ` · resets ${fmtFableReset(fb.resetsAt)} PT` : '';
+      fableBarHtml = `<div style="margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+          <span style="font-size:12px;font-weight:600;color:var(--text)">Fable 5 Weekly</span>
+          <span style="font-size:10px;color:var(--muted)">${fb.week}${reset}</span>
+        </div>
+        <div class="wg-bar-bg"><div class="wg-bar-fill ${cls}" style="width:${barPct}%"></div></div>
+        <div style="display:flex;justify-content:space-between;margin-top:2px;font-size:10px">
+          <span style="color:var(--${colorVar});font-weight:600">$${fb.usage.toFixed(2)} (${pct}%)</span>
+          <span style="color:var(--muted)">seeded limit: $${fb.ceiling.toFixed(2)}</span>
+        </div>
+      </div>`;
+    } else {
+      fableBarHtml = `<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+        <span style="font-size:12px;font-weight:600;color:var(--text)">Fable 5 Weekly</span>
+        <span style="font-size:11px;color:var(--muted)"><span style="font-weight:600;color:var(--blue)">$${fb.usage.toFixed(2)}</span> this week · no limit data yet (set fableWeeklyLimitSeed)</span>
+      </div>`;
+    }
+  }
+
+  // Assemble: today's windows → zoom connector → weekly → Fable 5 weekly
   if (windowBarHtml) bars.push(windowBarHtml);
   if (isWindowSegmented && isWeeklySegmented && todayIdx >= 0) {
     const lp = (todayIdx / 7 * 100).toFixed(2);
@@ -996,6 +1048,7 @@ function renderWindowGauge() {
     </div>`);
   }
   if (weeklyBarHtml) bars.push(weeklyBarHtml);
+  if (fableBarHtml) bars.push(fableBarHtml);
 
   const capParts = [];
   if (w.daily && w.daily.ceiling) {
