@@ -467,7 +467,8 @@ final class ProviderStatusController {
 
     func barState() -> CombinedBarView.ProviderBars {
         let primary = currentData?.resolvedPrimary
-        let primaryPct = CGFloat(displayBarPct(for: primary) ?? 0)
+        let primaryBarPct = displayBarPct(for: primary)
+        let primaryPct = CGFloat(primaryBarPct ?? 0)
         let secondaryPct = CGFloat(displayBarPct(for: currentData?.resolvedSecondary) ?? 0)
         let cycle = resolvedWeeklyCycle()
         let cycleTotalDots = cycle?.totalDots ?? 0
@@ -479,7 +480,7 @@ final class ProviderStatusController {
         let topAlert = alertLevel(usedPct: Double(primaryPct), timePct: wTimePct.map(Double.init))
         let bottomAlert = alertLevel(usedPct: Double(secondaryPct), timePct: weekProgress)
         return CombinedBarView.ProviderBars(
-            hasTopBar: primary != nil,
+            hasTopBar: primaryBarPct != nil,
             topPct: primaryPct,
             bottomPct: secondaryPct,
             topIsRemaining: primary?.isRemaining ?? false,
@@ -519,6 +520,8 @@ final class ProviderStatusController {
         if let primaryDisplayLabel {
             if let metric = data.resolvedPrimary, let pct = metric.pct {
                 primaryMenuItem.title = formatMetric(label: primaryDisplayLabel, metric: metric, pct: pct)
+            } else if let metric = data.resolvedPrimary {
+                primaryMenuItem.title = formatRawMetric(label: data.resolvedPrimaryLabel, metric: metric)
             } else {
                 primaryMenuItem.title = "\(primaryDisplayLabel) - no data yet"
             }
@@ -567,6 +570,8 @@ final class ProviderStatusController {
         if let primaryDisplayLabel {
             if let metric = currentData?.resolvedPrimary, let pct = metric.pct {
                 lines.append("\(sectionTitle) \(primaryDisplayLabel): \(formatMetricPercent(metric: metric, pct: pct))")
+            } else if let data = currentData, let metric = data.resolvedPrimary {
+                lines.append("\(sectionTitle) \(formatRawMetric(label: data.resolvedPrimaryLabel, metric: metric))")
             } else {
                 lines.append("\(sectionTitle) \(primaryDisplayLabel): no data")
             }
@@ -577,14 +582,22 @@ final class ProviderStatusController {
             lines.append("\(sectionTitle) \(secondaryDisplayLabel): no data")
         }
         if let data = currentData, let metric = data.resolvedTertiary {
+            let tertiaryLabel = hoverTertiaryLabel(data.resolvedTertiaryLabel)
             if let pct = metric.pct {
-                lines.append("\(sectionTitle) \(data.resolvedTertiaryLabel): \(formatMetricPercent(metric: metric, pct: pct))")
+                lines.append("\(tertiaryLabel): \(formatMetricPercent(metric: metric, pct: pct))")
             } else if let usageDisplay = metric.usageDisplay {
                 // No ceiling known yet — show the raw usage figure instead of nothing.
-                lines.append("\(sectionTitle) \(data.resolvedTertiaryLabel): \(usageDisplay)")
+                lines.append("\(tertiaryLabel): \(usageDisplay)")
             }
         }
         return lines
+    }
+
+    private func hoverTertiaryLabel(_ label: String) -> String {
+        if label.localizedCaseInsensitiveContains("fable") {
+            return "  Fable 5"
+        }
+        return label
     }
 
     private func formatMetricPercent(metric: MenubarData.MetricData, pct: Double) -> String {
@@ -633,9 +646,24 @@ final class ProviderStatusController {
             .compactMap { $0 }
             .first { $0 > now }
         if let resetEpoch {
-            return "\(label) - \(usedPct)% used (\(leftPct)% left, window resets at \(formatResetTime(resetEpoch, includeDate: includeResetDate)))"
+            let resetParts = [
+                timeLeftString(epoch: resetEpoch).map { "in \($0)" },
+                "at \(formatResetTime(resetEpoch, includeDate: includeResetDate))",
+            ].compactMap { $0 }
+            return "\(label) - \(usedPct)% used (\(leftPct)% left, window resets \(resetParts.joined(separator: " ")))"
+        }
+        if let detail = metric.detail, !detail.isEmpty {
+            return "\(label) - \(usedPct)% used (\(leftPct)% left, \(detail))"
         }
         return "\(label) - \(usedPct)% used (\(leftPct)% left)"
+    }
+
+    private func formatRawMetric(label: String, metric: MenubarData.MetricData) -> String {
+        let usage = metric.usageDisplay ?? String(format: "%.0f", metric.usage)
+        if let detail = metric.detail, !detail.isEmpty {
+            return "\(label) - \(usage) (\(detail))"
+        }
+        return "\(label) - \(usage)"
     }
 
     private func resolvedWeeklyCycle() -> MenubarData.WeeklyCycleData? {
@@ -744,29 +772,66 @@ final class SingleInstanceGuard {
     }
 }
 
-final class UsageHoverViewController: NSViewController {
-    init(lines: [String]) {
-        super.init(nibName: nil, bundle: nil)
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 5
-        stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+enum HoverRow {
+    case text(String)
+    case separator
+}
 
-        for line in lines {
-            let label = NSTextField(labelWithString: line)
-            label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-            label.textColor = .labelColor
-            label.lineBreakMode = .byTruncatingTail
-            stack.addArrangedSubview(label)
-        }
-
-        view = stack
-        view.frame = NSRect(x: 0, y: 0, width: 280, height: max(34, lines.count * 19 + 20))
+final class HoverSeparatorView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.separatorColor.cgColor
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 256, height: 1)
+    }
+}
+
+final class UsageHoverViewController: NSViewController {
+    init(rows: [HoverRow]) {
+        super.init(nibName: nil, bundle: nil)
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+
+        for row in rows {
+            switch row {
+            case .text(let line):
+                let label = NSTextField(labelWithString: Self.normalizeHoverLine(line))
+                label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+                label.textColor = .labelColor
+                label.lineBreakMode = .byTruncatingTail
+                stack.addArrangedSubview(label)
+            case .separator:
+                stack.addArrangedSubview(HoverSeparatorView(frame: NSRect(x: 0, y: 0, width: 256, height: 1)))
+            }
+        }
+
+        view = stack
+        view.frame = NSRect(x: 0, y: 0, width: 280, height: max(34, rows.count * 20 + 20))
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private static func normalizeHoverLine(_ line: String) -> String {
+        let lower = line.lowercased()
+        guard lower.contains("claude") && (lower.contains("fable") || lower.contains("fiber")) else {
+            return line
+        }
+        if let colon = line.firstIndex(of: ":") {
+            return "  Fable 5" + line[colon...]
+        }
+        return "  Fable 5"
     }
 }
 
@@ -976,13 +1041,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showUsageHover() {
         hoverHideWorkItem?.cancel()
         guard let button = statusItem.button else { return }
-        let lines = controllers.flatMap { $0.hoverSummaryLines() }
-        guard !lines.isEmpty else { return }
+        var rows: [HoverRow] = []
+        for controller in controllers {
+            let group = controller.hoverSummaryLines()
+            if group.isEmpty { continue }
+            if !rows.isEmpty { rows.append(.separator) }
+            rows.append(contentsOf: group.map { .text($0) })
+        }
+        guard !rows.isEmpty else { return }
 
         let popover = hoverPopover ?? NSPopover()
         popover.behavior = .transient
         popover.animates = false
-        popover.contentViewController = UsageHoverViewController(lines: lines)
+        popover.contentViewController = UsageHoverViewController(rows: rows)
         hoverPopover = popover
 
         if !popover.isShown {

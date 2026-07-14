@@ -15,6 +15,8 @@ const TIME_ZONE = "America/Los_Angeles";
 const DAILY_CEILING_DAYS = 14;
 const WEEKLY_SERIES_DAYS = 56;
 const WEEKLY_CYCLE_DAYS = 7;
+const FIVE_HOUR_WINDOW_SEC = 5 * 3600;
+const RATE_LIMIT_CLOCK_SKEW_SEC = 5 * 60;
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), ".codex", "sessions");
 const MENUBAR_ONLY_FLAG = "--menubar-only";
 
@@ -116,6 +118,7 @@ function buildThreads(rawThreads, promptMap, homeDir) {
       id: thread.id,
       title: thread.title,
       cwd: thread.cwd,
+      rolloutPath: thread.rollout_path || null,
       projectLabel: formatProjectLabel(thread.cwd, homeDir),
       shortProject: shortProjectName(thread.cwd),
       model: thread.model || "unknown",
@@ -391,27 +394,44 @@ function readLatestRateLimits() {
 
   const nowSec = Math.floor(Date.now() / 1000);
   const lines = fs.readFileSync(rolloutPath, "utf8").split("\n").filter(Boolean);
-  // Track the most recent non-null primary/secondary with a future resets_at independently.
-  // When the window limit is hit, OpenAI switches to a different limit_id (e.g. "premium")
-  // that returns primary: null — if we just took the last event we'd lose the rate limit signal.
-  let bestPrimary = null;
-  let bestSecondary = null;
+  // Track the most recent 5h and weekly limits independently. Codex sometimes
+  // returns the weekly 10080-minute limit under `primary`, so position alone is
+  // not reliable.
+  let bestFiveHour = null;
+  let bestWeekly = null;
   for (const line of lines) {
     try {
       const entry = JSON.parse(line);
       if (entry.type !== "event_msg" || entry.payload?.type !== "token_count") continue;
       const rl = entry.payload?.rate_limits;
       if (!rl) continue;
-      if (rl.primary && Number.isInteger(rl.primary.resets_at) && rl.primary.resets_at > nowSec) {
-        bestPrimary = rl.primary;
-      }
-      if (rl.secondary && Number.isInteger(rl.secondary.resets_at) && rl.secondary.resets_at > nowSec) {
-        bestSecondary = rl.secondary;
+      for (const [slot, limit] of [["primary", rl.primary], ["secondary", rl.secondary]]) {
+        if (!limit || !Number.isInteger(limit.resets_at) || limit.resets_at <= nowSec) continue;
+        if (limit.window_minutes === 300 || (limit.window_minutes == null && slot === "primary")) {
+          bestFiveHour = limit;
+        } else if (limit.window_minutes === 10080 || (limit.window_minutes == null && slot === "secondary")) {
+          bestWeekly = limit;
+        }
       }
     } catch {}
   }
-  if (!bestPrimary && !bestSecondary) return null;
-  return { primary: bestPrimary, secondary: bestSecondary };
+  if (!bestFiveHour && !bestWeekly) return null;
+  return { primary: bestFiveHour, secondary: bestWeekly };
+}
+
+function normalizeCodexRateLimits(rateLimits) {
+  if (!rateLimits) return null;
+  let fiveHour = null;
+  let weekly = null;
+  for (const [slot, limit] of [["primary", rateLimits.primary], ["secondary", rateLimits.secondary]]) {
+    if (!limit) continue;
+    if (limit.window_minutes === 300 || (limit.window_minutes == null && slot === "primary")) {
+      fiveHour = limit;
+    } else if (limit.window_minutes === 10080 || (limit.window_minutes == null && slot === "secondary")) {
+      weekly = limit;
+    }
+  }
+  return { primary: fiveHour, secondary: weekly };
 }
 
 function buildRecentDailySeries(daily, days) {
@@ -437,12 +457,97 @@ function rollingSums(series, size, field) {
   return sums;
 }
 
+function readLocalTokenEvents(threads, nowSec) {
+  if (!Array.isArray(threads) || threads.length === 0) return [];
+  const nowMs = nowSec * 1000;
+  const windowMs = FIVE_HOUR_WINDOW_SEC * 1000;
+  const cutoffMs = nowMs - 14 * 24 * 60 * 60 * 1000;
+  const paths = Array.from(new Set(threads.map((thread) => thread.rolloutPath).filter(Boolean)));
+  const events = [];
+  for (const rolloutPath of paths) {
+    if (!fs.existsSync(rolloutPath)) continue;
+    let stat;
+    try {
+      stat = fs.statSync(rolloutPath);
+    } catch {
+      continue;
+    }
+    if (stat.mtimeMs < cutoffMs - windowMs) continue;
+    for (const line of fs.readFileSync(rolloutPath, "utf8").split("\n")) {
+      if (!line) continue;
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type !== "event_msg" || entry.payload?.type !== "token_count") continue;
+        const ts = Date.parse(entry.timestamp);
+        if (!Number.isFinite(ts) || ts < cutoffMs || ts > nowMs) continue;
+        const tokens = entry.payload?.info?.last_token_usage?.total_tokens;
+        if (typeof tokens !== "number" || tokens <= 0) continue;
+        events.push({ ts, tokens });
+      } catch {}
+    }
+  }
+  return events;
+}
+
+function buildLocalFiveHourEstimate(threads, nowSec) {
+  const events = readLocalTokenEvents(threads, nowSec);
+  if (events.length === 0) return null;
+  const nowMs = nowSec * 1000;
+  const windowMs = FIVE_HOUR_WINDOW_SEC * 1000;
+  const windowCount = Math.ceil((14 * 24 * 60 * 60) / FIVE_HOUR_WINDOW_SEC);
+  const usages = [];
+
+  for (let idx = 0; idx < windowCount; idx += 1) {
+    const endMs = nowMs - idx * windowMs;
+    const startMs = endMs - windowMs;
+    const usage = events.reduce((sum, event) => {
+      if (event.ts < startMs || event.ts > endMs) return sum;
+      return sum + event.tokens;
+    }, 0);
+    usages.push(usage);
+  }
+
+  const currentUsage = usages[0] || 0;
+  if (currentUsage <= 0) return null;
+  const ceiling = Math.max(1, ...usages);
+  return {
+    usage: currentUsage,
+    ceiling,
+    pct: Math.min(currentUsage / ceiling, 1),
+  };
+}
+
+function readFiveHourResetAnchor(threads, nowSec) {
+  if (!Array.isArray(threads) || threads.length === 0) return null;
+  const paths = Array.from(new Set(threads.map((thread) => thread.rolloutPath).filter(Boolean)));
+  let anchor = null;
+  for (const rolloutPath of paths) {
+    if (!fs.existsSync(rolloutPath)) continue;
+    for (const line of fs.readFileSync(rolloutPath, "utf8").split("\n")) {
+      if (!line) continue;
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type !== "event_msg" || entry.payload?.type !== "token_count") continue;
+        const rl = entry.payload?.rate_limits;
+        if (!rl) continue;
+        for (const limit of [rl.primary, rl.secondary]) {
+          if (!limit || limit.window_minutes !== 300 || !Number.isInteger(limit.resets_at)) continue;
+          if (limit.resets_at > nowSec + FIVE_HOUR_WINDOW_SEC + RATE_LIMIT_CLOCK_SKEW_SEC) continue;
+          if (anchor == null || limit.resets_at > anchor) anchor = limit.resets_at;
+        }
+      } catch {}
+    }
+  }
+  return anchor;
+}
+
 function buildMenubarData(daily, options = {}) {
   const dailySeries = buildRecentDailySeries(daily, WEEKLY_SERIES_DAYS);
   const last14 = dailySeries.slice(-DAILY_CEILING_DAYS);
   const today = dailySeries[dailySeries.length - 1] || { tokens: 0, prompts: 0 };
   const todayDate = today.date || laDate(Date.now());
-  const rateLimits = options.rateLimits === undefined ? readLatestRateLimits() : options.rateLimits;
+  const rawRateLimits = options.rateLimits === undefined ? readLatestRateLimits() : options.rateLimits;
+  const rateLimits = normalizeCodexRateLimits(rawRateLimits);
   const todayUsage = today.tokens || 0;
   const todayPromptCount = today.prompts || 0;
   const dailyCeiling = Math.max(1, ...last14.map((entry) => entry.tokens || 0));
@@ -452,10 +557,14 @@ function buildMenubarData(daily, options = {}) {
   const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
   const primaryUsedPercent = rateLimits?.primary?.used_percent;
   const secondaryUsedPercent = rateLimits?.secondary?.used_percent;
-  const primaryResetFresh = Number.isInteger(rateLimits?.primary?.resets_at) && rateLimits.primary.resets_at > nowSec;
+  const primaryResetFresh =
+    Number.isInteger(rateLimits?.primary?.resets_at) &&
+    rateLimits.primary.resets_at > nowSec &&
+    rateLimits.primary.resets_at <= nowSec + FIVE_HOUR_WINDOW_SEC + RATE_LIMIT_CLOCK_SKEW_SEC;
   const secondaryResetFresh = Number.isInteger(rateLimits?.secondary?.resets_at) && rateLimits.secondary.resets_at > nowSec;
   const hasPrimaryRateLimit = typeof primaryUsedPercent === "number" && primaryResetFresh;
   const hasSecondaryRateLimit = typeof secondaryUsedPercent === "number" && secondaryResetFresh;
+  const hasOfficialRateLimit = rateLimits?.primary || rateLimits?.secondary;
   // Carry-forward: when today has no activity yet (e.g. just past midnight), show the most
   // recent active day so the bars don't reset to empty before the user opens Codex.
   const carryEntry = !hasPrimaryRateLimit && todayUsage === 0
@@ -466,26 +575,59 @@ function buildMenubarData(daily, options = {}) {
   const primaryLabelFallback = carryEntry
     ? (carryEntry.date === shiftDateStr(todayDate, -1) ? "Yesterday" : "Recent")
     : "Today";
-  const primaryPct = hasPrimaryRateLimit ? Math.max(0, Math.min(1, primaryUsedPercent / 100)) : Math.min(displayDayUsage / dailyCeiling, 1);
+  const primaryPct = hasPrimaryRateLimit ? Math.max(0, Math.min(1, primaryUsedPercent / 100)) : null;
   const secondaryPct = hasSecondaryRateLimit ? Math.max(0, Math.min(1, secondaryUsedPercent / 100)) : Math.min(weeklyUsage / weeklyCeiling, 1);
 
   // Always compute a projected 5h window for the time-progress bar.
   // If the last known reset is still in the future, use it directly.
   // If it has expired, roll it forward by however many 5h intervals have elapsed.
-  const WINDOW_SEC = 5 * 3600;
-  const lastPrimaryReset = Number.isInteger(rateLimits?.primary?.resets_at) ? rateLimits.primary.resets_at : null;
+  const fallbackFiveHourReset = Number.isInteger(options.fiveHourResetAnchor)
+    ? options.fiveHourResetAnchor
+    : readFiveHourResetAnchor(options.threads, nowSec);
+  const lastPrimaryReset = Number.isInteger(rateLimits?.primary?.resets_at)
+    ? rateLimits.primary.resets_at
+    : fallbackFiveHourReset;
   let projectedWindowStart = null;
   let projectedWindowEnd = null;
   if (lastPrimaryReset !== null) {
-    if (lastPrimaryReset > nowSec) {
-      projectedWindowStart = lastPrimaryReset - WINDOW_SEC;
+    if (lastPrimaryReset > nowSec && lastPrimaryReset <= nowSec + FIVE_HOUR_WINDOW_SEC + RATE_LIMIT_CLOCK_SKEW_SEC) {
+      projectedWindowStart = lastPrimaryReset - FIVE_HOUR_WINDOW_SEC;
       projectedWindowEnd = lastPrimaryReset;
-    } else {
-      const windowsElapsed = Math.floor((nowSec - lastPrimaryReset) / WINDOW_SEC) + 1;
-      projectedWindowEnd = lastPrimaryReset + windowsElapsed * WINDOW_SEC;
-      projectedWindowStart = projectedWindowEnd - WINDOW_SEC;
+    } else if (lastPrimaryReset <= nowSec) {
+      const windowsElapsed = Math.floor((nowSec - lastPrimaryReset) / FIVE_HOUR_WINDOW_SEC) + 1;
+      projectedWindowEnd = lastPrimaryReset + windowsElapsed * FIVE_HOUR_WINDOW_SEC;
+      projectedWindowStart = projectedWindowEnd - FIVE_HOUR_WINDOW_SEC;
     }
   }
+
+  const hasLocalPrimaryUsage = displayDayUsage > 0 || displayDayPrompts > 0;
+  const localFiveHour = buildLocalFiveHourEstimate(options.threads, nowSec);
+  const localFallbackPct = localFiveHour?.pct ?? null;
+  const localFallbackUsage = localFiveHour?.usage ?? displayDayUsage;
+  const localFallbackCeiling = localFiveHour?.ceiling ?? null;
+  const primaryMetric = hasPrimaryRateLimit || projectedWindowEnd !== null || hasLocalPrimaryUsage || !hasOfficialRateLimit ? {
+    usage: hasPrimaryRateLimit ? Math.round(primaryPct * 100) : localFallbackUsage,
+    ceiling: hasPrimaryRateLimit ? 100 : localFallbackCeiling,
+    pct: hasPrimaryRateLimit ? primaryPct : localFallbackPct,
+    usageDisplay: hasPrimaryRateLimit
+      ? `${Math.round(primaryPct * 100)}% used`
+      : localFallbackPct != null
+        ? `${Math.round(localFallbackPct * 100)}% est.`
+        : `${compactNumber(displayDayUsage)} tok`,
+    ceilingDisplay: hasPrimaryRateLimit || localFallbackCeiling == null ? null : `${compactNumber(localFallbackCeiling)} tok est.`,
+    detail: hasPrimaryRateLimit
+      ? formatResetDetail(rateLimits?.primary?.resets_at)
+      : carryEntry !== null
+        ? `${displayDayPrompts} prompts (${carryEntry.date})`
+        : projectedWindowEnd !== null
+          ? formatResetDetail(projectedWindowEnd)
+          : localFallbackPct != null
+            ? "estimated from local 5h activity"
+            : `${displayDayPrompts} prompts`,
+    startEpoch: projectedWindowStart,
+    endEpoch: projectedWindowEnd,
+    isRemaining: false,
+  } : null;
 
   return {
     updatedAt: new Date().toISOString(),
@@ -493,23 +635,7 @@ function buildMenubarData(daily, options = {}) {
     reportPath: path.resolve(ROOT, "report.html"),
     primaryLabel: hasPrimaryRateLimit ? "5h used" : primaryLabelFallback,
     secondaryLabel: hasSecondaryRateLimit ? "Week used" : "7 Days",
-    primary: {
-      usage: hasPrimaryRateLimit ? Math.round(primaryPct * 100) : displayDayUsage,
-      ceiling: hasPrimaryRateLimit ? 100 : dailyCeiling,
-      pct: primaryPct,
-      usageDisplay: hasPrimaryRateLimit ? `${Math.round(primaryPct * 100)}% used` : `${compactNumber(displayDayUsage)} tok`,
-      ceilingDisplay: hasPrimaryRateLimit ? null : `${compactNumber(dailyCeiling)} tok`,
-      detail: hasPrimaryRateLimit
-        ? formatResetDetail(rateLimits?.primary?.resets_at)
-        : carryEntry !== null
-          ? `${displayDayPrompts} prompts (${carryEntry.date})`
-          : projectedWindowEnd !== null
-            ? formatResetDetail(projectedWindowEnd)
-            : `${displayDayPrompts} prompts`,
-      startEpoch: projectedWindowStart,
-      endEpoch: projectedWindowEnd,
-      isRemaining: false,
-    },
+    primary: primaryMetric,
     secondary: {
       usage: hasSecondaryRateLimit ? Math.round(secondaryPct * 100) : weeklyUsage,
       ceiling: hasSecondaryRateLimit ? 100 : weeklyCeiling,
@@ -541,7 +667,7 @@ function loadTrackerData() {
   const homeDir = os.homedir();
   const rawThreads = execSql(
     STATE_DB,
-    "select id, title, cwd, model, reasoning_effort, tokens_used, created_at, updated_at from threads where archived = 0 order by updated_at desc"
+    "select id, title, cwd, model, reasoning_effort, tokens_used, created_at, updated_at, rollout_path from threads where archived = 0 order by updated_at desc"
   );
   const history = readJsonl(HISTORY_PATH);
   const promptMap = groupPromptsBySession(history);
@@ -573,7 +699,7 @@ function main(argv = process.argv.slice(2)) {
   const menubarOnly = argv.includes(MENUBAR_ONLY_FLAG);
   const { data, daily, history, threads } = loadTrackerData();
   if (!menubarOnly) writeDataFile(data);
-  writeMenubarJson(buildMenubarData(daily));
+  writeMenubarJson(buildMenubarData(daily, { threads }));
   const target = menubarOnly ? MENUBAR_JSON_PATH : OUTPUT;
   console.log(`[codex build] wrote ${target} with ${threads.length} threads and ${history.length} prompts`);
 }

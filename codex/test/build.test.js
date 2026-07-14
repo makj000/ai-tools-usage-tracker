@@ -213,5 +213,141 @@ test("projects a stale 5h reset forward so the menu still has a window end", () 
   assert.match(data.primary.detail, /^resets /);
 });
 
+test("ignores impossible future primary reset for the 5h window", () => {
+  const nowSec = Math.floor(Date.parse("2026-07-14T05:40:00.000Z") / 1000);
+  const impossibleResetEpoch = nowSec + 134 * 60 * 60;
+  const data = buildMenubarData([], {
+    nowSec,
+    rateLimits: {
+      primary: { used_percent: 67, resets_at: impossibleResetEpoch },
+      secondary: null,
+    },
+  });
+
+  assert.strictEqual(data.primaryLabel, "Today");
+  assert.strictEqual(data.primary, null);
+});
+
+test("treats 10080-minute primary limit as weekly and leaves 5h empty", () => {
+  const nowSec = Math.floor(Date.parse("2026-07-14T05:40:00.000Z") / 1000);
+  const weeklyResetEpoch = nowSec + 134 * 60 * 60;
+  const data = buildMenubarData([], {
+    nowSec,
+    rateLimits: {
+      primary: { used_percent: 67, window_minutes: 10080, resets_at: weeklyResetEpoch },
+      secondary: null,
+    },
+  });
+
+  assert.strictEqual(data.primary, null);
+  assert.strictEqual(data.secondaryLabel, "Week used");
+  assert.strictEqual(data.secondary.usageDisplay, "67% used");
+  assert.strictEqual(data.secondary.endEpoch, weeklyResetEpoch);
+  assert.match(data.secondary.detail, /^resets /);
+});
+
+test("falls back to local today usage when only a weekly official limit is present", () => {
+  const nowSec = Math.floor(Date.parse("2026-07-14T19:40:00.000Z") / 1000);
+  const weeklyResetEpoch = nowSec + 134 * 60 * 60;
+  const data = buildMenubarData([
+    { date: "2026-07-14", threads: 2, prompts: 8, tokens: 1200 },
+  ], {
+    nowSec,
+    rateLimits: {
+      primary: { used_percent: 67, window_minutes: 10080, resets_at: weeklyResetEpoch },
+      secondary: null,
+    },
+  });
+
+  assert.strictEqual(data.primaryLabel, "Today");
+  assert.strictEqual(data.primary.usageDisplay, "1.2K tok");
+  assert.strictEqual(data.primary.pct, null);
+  assert.strictEqual(data.primary.ceiling, null);
+  assert.strictEqual(data.primary.detail, "8 prompts");
+  assert.strictEqual(data.secondaryLabel, "Week used");
+  assert.strictEqual(data.secondary.usageDisplay, "67% used");
+});
+
+test("estimates 5h percent from local recent thread activity", () => {
+  const nowSec = Math.floor(Date.parse("2026-07-14T19:40:00.000Z") / 1000);
+  const weeklyResetEpoch = nowSec + 134 * 60 * 60;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-rollout-"));
+  const rolloutPath = path.join(tmpDir, "rollout-test.jsonl");
+  fs.writeFileSync(rolloutPath, [
+    JSON.stringify({
+      timestamp: new Date((nowSec - 60 * 60) * 1000).toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { total_tokens: 200 } },
+      },
+    }),
+    JSON.stringify({
+      timestamp: new Date((nowSec - 6 * 60 * 60) * 1000).toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { total_tokens: 400 } },
+      },
+    }),
+  ].join("\n") + "\n");
+  const data = buildMenubarData([
+    { date: "2026-07-14", threads: 2, prompts: 8, tokens: 1200 },
+  ], {
+    nowSec,
+    threads: [
+      { rolloutPath },
+    ],
+    rateLimits: {
+      primary: { used_percent: 67, window_minutes: 10080, resets_at: weeklyResetEpoch },
+      secondary: null,
+    },
+  });
+
+  assert.strictEqual(data.primaryLabel, "Today");
+  assert.strictEqual(data.primary.usage, 200);
+  assert.strictEqual(data.primary.ceiling, 400);
+  assert.strictEqual(data.primary.pct, 0.5);
+  assert.strictEqual(data.primary.usageDisplay, "50% est.");
+  assert.strictEqual(data.primary.detail, "estimated from local 5h activity");
+});
+
+test("projects a 5h reset window for estimated local usage", () => {
+  const nowSec = Math.floor(Date.parse("2026-07-14T19:40:00.000Z") / 1000);
+  const staleFiveHourReset = Math.floor(Date.parse("2026-07-14T17:00:00.000Z") / 1000);
+  const weeklyResetEpoch = nowSec + 134 * 60 * 60;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-rollout-"));
+  const rolloutPath = path.join(tmpDir, "rollout-test.jsonl");
+  fs.writeFileSync(rolloutPath, [
+    JSON.stringify({
+      timestamp: new Date((nowSec - 60 * 60) * 1000).toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { total_tokens: 200 } },
+        rate_limits: {
+          primary: { used_percent: 12, window_minutes: 300, resets_at: staleFiveHourReset },
+        },
+      },
+    }),
+  ].join("\n") + "\n");
+  const data = buildMenubarData([
+    { date: "2026-07-14", threads: 2, prompts: 8, tokens: 1200 },
+  ], {
+    nowSec,
+    threads: [
+      { rolloutPath },
+    ],
+    rateLimits: {
+      primary: { used_percent: 67, window_minutes: 10080, resets_at: weeklyResetEpoch },
+      secondary: null,
+    },
+  });
+
+  assert.strictEqual(data.primary.startEpoch, Math.floor(Date.parse("2026-07-14T17:00:00.000Z") / 1000));
+  assert.strictEqual(data.primary.endEpoch, Math.floor(Date.parse("2026-07-14T22:00:00.000Z") / 1000));
+  assert.match(data.primary.detail, /^resets /);
+});
+
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);
