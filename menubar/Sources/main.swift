@@ -569,25 +569,25 @@ final class ProviderStatusController {
         var lines: [String] = []
         if let primaryDisplayLabel {
             if let metric = currentData?.resolvedPrimary, let pct = metric.pct {
-                lines.append("\(sectionTitle) \(primaryDisplayLabel): \(formatMetricPercent(metric: metric, pct: pct))")
+                lines.append(formatHoverMetricLine(label: "\(sectionTitle) \(primaryDisplayLabel)", metric: metric, pct: pct))
             } else if let data = currentData, let metric = data.resolvedPrimary {
-                lines.append("\(sectionTitle) \(formatRawMetric(label: data.resolvedPrimaryLabel, metric: metric))")
+                lines.append(formatHoverRawLine(label: "\(sectionTitle) \(data.resolvedPrimaryLabel)", metric: metric))
             } else {
-                lines.append("\(sectionTitle) \(primaryDisplayLabel): no data")
+                lines.append(formatHoverStatusLine(label: "\(sectionTitle) \(primaryDisplayLabel)", status: "no data"))
             }
         }
         if let metric = currentData?.resolvedSecondary, let pct = metric.pct {
-            lines.append("\(sectionTitle) \(secondaryDisplayLabel): \(formatMetricPercent(metric: metric, pct: pct))")
+            lines.append(formatHoverMetricLine(label: "\(sectionTitle) \(secondaryDisplayLabel)", metric: metric, pct: pct))
         } else {
-            lines.append("\(sectionTitle) \(secondaryDisplayLabel): no data")
+            lines.append(formatHoverStatusLine(label: "\(sectionTitle) \(secondaryDisplayLabel)", status: "no data"))
         }
         if let data = currentData, let metric = data.resolvedTertiary {
             let tertiaryLabel = hoverTertiaryLabel(data.resolvedTertiaryLabel)
             if let pct = metric.pct {
-                lines.append("\(tertiaryLabel): \(formatMetricPercent(metric: metric, pct: pct))")
+                lines.append(formatHoverMetricLine(label: tertiaryLabel, metric: metric, pct: pct))
             } else if let usageDisplay = metric.usageDisplay {
                 // No ceiling known yet — show the raw usage figure instead of nothing.
-                lines.append("\(tertiaryLabel): \(usageDisplay)")
+                lines.append(formatHoverStatusLine(label: tertiaryLabel, status: usageDisplay))
             }
         }
         return lines
@@ -598,6 +598,32 @@ final class ProviderStatusController {
             return "  Fable 5"
         }
         return label
+    }
+
+    private func formatHoverMetricLine(label: String, metric: MenubarData.MetricData, pct: Double) -> String {
+        let usedFraction = metric.isRemaining == true ? 1 - pct : pct
+        let usedPct = Int((max(0, min(1, usedFraction)) * 100).rounded())
+        let percent = String(format: "%3d%%", usedPct)
+        let suffix = timeLeftString(epoch: metric.endEpoch).map { " used (\($0) left)" } ?? " used"
+        return "\(paddedHoverLabel(label)) \(percent)\(suffix)"
+    }
+
+    private func formatHoverRawLine(label: String, metric: MenubarData.MetricData) -> String {
+        let usage = metric.usageDisplay ?? String(format: "%.0f", metric.usage)
+        if let detail = metric.detail, !detail.isEmpty {
+            return "\(paddedHoverLabel(label)) \(usage) (\(detail))"
+        }
+        return "\(paddedHoverLabel(label)) \(usage)"
+    }
+
+    private func formatHoverStatusLine(label: String, status: String) -> String {
+        "\(paddedHoverLabel(label)) \(status)"
+    }
+
+    private func paddedHoverLabel(_ label: String) -> String {
+        let width = 20
+        if label.count >= width { return label }
+        return label + String(repeating: " ", count: width - label.count)
     }
 
     private func formatMetricPercent(metric: MenubarData.MetricData, pct: Double) -> String {
