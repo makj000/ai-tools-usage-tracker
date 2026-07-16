@@ -11,12 +11,15 @@ const STATE_DB = path.join(os.homedir(), ".codex", "state_5.sqlite");
 const HISTORY_PATH = path.join(os.homedir(), ".codex", "history.jsonl");
 const MENUBAR_JSON_PATH = path.join(os.homedir(), ".codex", "codex-tracker-menubar.json");
 const OPENAI_CHAT_DIR = path.join(os.homedir(), "Library", "Application Support", "com.openai.chat");
+const ACCURACY_LATEST_PATH = path.join(path.dirname(ROOT), "accuracy", "snapshots", "latest.json");
+const ACCURACY_SNAPSHOTS_DIR = path.dirname(ACCURACY_LATEST_PATH);
 const TIME_ZONE = "America/Los_Angeles";
 const DAILY_CEILING_DAYS = 14;
 const WEEKLY_SERIES_DAYS = 56;
 const WEEKLY_CYCLE_DAYS = 7;
 const FIVE_HOUR_WINDOW_SEC = 5 * 3600;
 const RATE_LIMIT_CLOCK_SKEW_SEC = 5 * 60;
+const OFFICIAL_USAGE_MAX_AGE_SEC = 2 * 3600;
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), ".codex", "sessions");
 const MENUBAR_ONLY_FLAG = "--menubar-only";
 
@@ -93,6 +96,64 @@ function formatResetDetail(epochSeconds) {
   }).formatToParts(new Date(epochSeconds * 1000));
   const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
   return `resets ${values.month} ${values.day}, ${values.hour}:${values.minute} ${values.dayPeriod} ${values.timeZoneName}`;
+}
+
+function parseOfficialResetEpoch(text) {
+  const match = String(text || "").match(/Resets\s+([A-Z][a-z]{2,8})\s+(\d{1,2}),\s+(\d{4})\s+(\d{1,2}):(\d{2})\s+(AM|PM)/i);
+  if (!match) return null;
+  const months = {
+    jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2,
+    apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6,
+    aug: 7, august: 7, sep: 8, sept: 8, september: 8, oct: 9, october: 9,
+    nov: 10, november: 10, dec: 11, december: 11,
+  };
+  const month = months[match[1].toLowerCase()];
+  if (month == null) return null;
+  let hour = Number(match[4]);
+  if (match[6].toUpperCase() === "PM" && hour !== 12) hour += 12;
+  if (match[6].toUpperCase() === "AM" && hour === 12) hour = 0;
+  const date = new Date(Number(match[3]), month, Number(match[2]), hour, Number(match[5]), 0);
+  return Math.floor(date.getTime() / 1000);
+}
+
+function parseOfficialUsageBlock(text, heading) {
+  const re = new RegExp(`${heading}\\s+([0-9]+)%\\s+(remaining|used)([\\s\\S]*?)(?=\\n\\s*(?:5 hour usage limit|Weekly usage limit|Credits remaining|Usage breakdown|Product activity)\\b|$)`, "i");
+  const match = String(text || "").match(re);
+  if (!match) return null;
+  const pct = Number(match[1]);
+  const direction = match[2].toLowerCase();
+  const resetEpoch = parseOfficialResetEpoch(match[3]);
+  return {
+    pct,
+    isRemaining: direction === "remaining",
+    resetEpoch,
+  };
+}
+
+function readOfficialCodexUsage(options = {}) {
+  if (options.officialUsage !== undefined) return options.officialUsage;
+  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
+  const maxAgeSec = options.officialUsageMaxAgeSec ?? OFFICIAL_USAGE_MAX_AGE_SEC;
+  let latest;
+  try {
+    latest = JSON.parse(fs.readFileSync(ACCURACY_LATEST_PATH, "utf8"));
+  } catch {
+    return null;
+  }
+  const codex = latest?.providers?.codex;
+  if (!codex || codex.loginWall || codex.error || !codex.textFile || !codex.capturedAt) return null;
+  const capturedSec = Math.floor(Date.parse(codex.capturedAt) / 1000);
+  if (!Number.isFinite(capturedSec) || nowSec - capturedSec > maxAgeSec) return null;
+  let text = "";
+  try {
+    text = fs.readFileSync(path.join(ACCURACY_SNAPSHOTS_DIR, codex.textFile), "utf8");
+  } catch {
+    return null;
+  }
+  const fiveHour = parseOfficialUsageBlock(text, "5 hour usage limit");
+  const weekly = parseOfficialUsageBlock(text, "Weekly usage limit");
+  if (!fiveHour && !weekly) return null;
+  return { fiveHour, weekly, capturedAt: codex.capturedAt };
 }
 
 function groupPromptsBySession(history) {
@@ -434,12 +495,11 @@ function normalizeCodexRateLimits(rateLimits) {
   return { primary: fiveHour, secondary: weekly };
 }
 
-function buildRecentDailySeries(daily, days) {
+function buildRecentDailySeries(daily, days, nowMs = Date.now()) {
   const perDay = new Map(daily.map((entry) => [entry.date, entry]));
   const series = [];
-  const now = new Date();
   for (let offset = days - 1; offset >= 0; offset -= 1) {
-    const date = new Date(now.getTime() - offset * 24 * 60 * 60 * 1000);
+    const date = new Date(nowMs - offset * 24 * 60 * 60 * 1000);
     const key = laDate(date.getTime());
     const bucket = perDay.get(key) || { date: key, threads: 0, prompts: 0, tokens: 0 };
     series.push(bucket);
@@ -482,38 +542,74 @@ function readLocalTokenEvents(threads, nowSec) {
         if (!Number.isFinite(ts) || ts < cutoffMs || ts > nowMs) continue;
         const tokens = entry.payload?.info?.last_token_usage?.total_tokens;
         if (typeof tokens !== "number" || tokens <= 0) continue;
-        events.push({ ts, tokens });
+        const rl = entry.payload?.rate_limits;
+        let fiveHourLimit = null;
+        for (const limit of [rl?.primary, rl?.secondary]) {
+          if (limit?.window_minutes === 300 && typeof limit.used_percent === "number" && Number.isInteger(limit.resets_at)) {
+            fiveHourLimit = limit;
+          }
+        }
+        events.push({ ts, tokens, fiveHourLimit });
       } catch {}
     }
   }
   return events;
 }
 
-function buildLocalFiveHourEstimate(threads, nowSec) {
+function sumTokenEvents(events, startMs, endMs) {
+  return events.reduce((sum, event) => {
+    if (event.ts < startMs || event.ts > endMs) return sum;
+    return sum + event.tokens;
+  }, 0);
+}
+
+function median(values) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function calibratedFiveHourCeiling(events) {
+  const ceilings = [];
+  for (const event of events) {
+    const limit = event.fiveHourLimit;
+    if (!limit || limit.used_percent <= 0 || limit.used_percent > 100) continue;
+    const windowStartMs = (limit.resets_at - FIVE_HOUR_WINDOW_SEC) * 1000;
+    const usageAtSample = sumTokenEvents(events, windowStartMs, event.ts);
+    if (usageAtSample <= 0) continue;
+    ceilings.push(usageAtSample / (limit.used_percent / 100));
+  }
+  return median(ceilings);
+}
+
+function buildLocalFiveHourEstimate(threads, nowSec, windowStartSec = null, windowEndSec = null) {
   const events = readLocalTokenEvents(threads, nowSec);
   if (events.length === 0) return null;
   const nowMs = nowSec * 1000;
   const windowMs = FIVE_HOUR_WINDOW_SEC * 1000;
   const windowCount = Math.ceil((14 * 24 * 60 * 60) / FIVE_HOUR_WINDOW_SEC);
-  const usages = [];
+  const currentStartMs = Number.isInteger(windowStartSec) ? windowStartSec * 1000 : nowMs - windowMs;
+  const currentEndMs = Number.isInteger(windowEndSec) ? Math.min(windowEndSec * 1000, nowMs) : nowMs;
+  const currentUsage = sumTokenEvents(events, currentStartMs, currentEndMs);
+  if (currentUsage <= 0) return null;
 
-  for (let idx = 0; idx < windowCount; idx += 1) {
-    const endMs = nowMs - idx * windowMs;
-    const startMs = endMs - windowMs;
-    const usage = events.reduce((sum, event) => {
-      if (event.ts < startMs || event.ts > endMs) return sum;
-      return sum + event.tokens;
-    }, 0);
-    usages.push(usage);
+  const historicalUsages = [];
+  for (let idx = 1; idx <= windowCount; idx += 1) {
+    const startMs = currentStartMs - idx * windowMs;
+    const endMs = currentEndMs - idx * windowMs;
+    const usage = sumTokenEvents(events, startMs, endMs);
+    if (usage > 0) historicalUsages.push(usage);
   }
 
-  const currentUsage = usages[0] || 0;
-  if (currentUsage <= 0) return null;
-  const ceiling = Math.max(1, ...usages);
+  if (historicalUsages.length === 0) return null;
+  const calibratedCeiling = calibratedFiveHourCeiling(events);
+  const baseCeiling = Math.max(1, calibratedCeiling ?? Math.max(...historicalUsages));
+  const ceiling = Math.max(baseCeiling, currentUsage / 0.95);
   return {
     usage: currentUsage,
     ceiling,
-    pct: Math.min(currentUsage / ceiling, 1),
+    pct: Math.min(currentUsage / ceiling, 0.95),
   };
 }
 
@@ -542,10 +638,12 @@ function readFiveHourResetAnchor(threads, nowSec) {
 }
 
 function buildMenubarData(daily, options = {}) {
-  const dailySeries = buildRecentDailySeries(daily, WEEKLY_SERIES_DAYS);
+  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
+  const dailySeries = buildRecentDailySeries(daily, WEEKLY_SERIES_DAYS, nowSec * 1000);
   const last14 = dailySeries.slice(-DAILY_CEILING_DAYS);
   const today = dailySeries[dailySeries.length - 1] || { tokens: 0, prompts: 0 };
-  const todayDate = today.date || laDate(Date.now());
+  const todayDate = today.date || laDate(nowSec * 1000);
+  const officialUsage = readOfficialCodexUsage({ ...options, nowSec });
   const rawRateLimits = options.rateLimits === undefined ? readLatestRateLimits() : options.rateLimits;
   const rateLimits = normalizeCodexRateLimits(rawRateLimits);
   const todayUsage = today.tokens || 0;
@@ -554,16 +652,19 @@ function buildMenubarData(daily, options = {}) {
   const weeklyUsage = dailySeries.slice(-7).reduce((sum, entry) => sum + (entry.tokens || 0), 0);
   const weeklyPromptCount = dailySeries.slice(-7).reduce((sum, entry) => sum + (entry.prompts || 0), 0);
   const weeklyCeiling = Math.max(1, ...rollingSums(dailySeries, 7, "tokens"));
-  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
   const primaryUsedPercent = rateLimits?.primary?.used_percent;
   const secondaryUsedPercent = rateLimits?.secondary?.used_percent;
+  const officialFiveHourPct = officialUsage?.fiveHour?.pct;
+  const officialWeeklyPct = officialUsage?.weekly?.pct;
   const primaryResetFresh =
     Number.isInteger(rateLimits?.primary?.resets_at) &&
     rateLimits.primary.resets_at > nowSec &&
     rateLimits.primary.resets_at <= nowSec + FIVE_HOUR_WINDOW_SEC + RATE_LIMIT_CLOCK_SKEW_SEC;
   const secondaryResetFresh = Number.isInteger(rateLimits?.secondary?.resets_at) && rateLimits.secondary.resets_at > nowSec;
-  const hasPrimaryRateLimit = typeof primaryUsedPercent === "number" && primaryResetFresh;
-  const hasSecondaryRateLimit = typeof secondaryUsedPercent === "number" && secondaryResetFresh;
+  const hasOfficialFiveHourUsage = typeof officialFiveHourPct === "number";
+  const hasOfficialWeeklyUsage = typeof officialWeeklyPct === "number";
+  const hasPrimaryRateLimit = !hasOfficialFiveHourUsage && typeof primaryUsedPercent === "number" && primaryResetFresh;
+  const hasSecondaryRateLimit = !hasOfficialWeeklyUsage && typeof secondaryUsedPercent === "number" && secondaryResetFresh;
   const hasOfficialRateLimit = rateLimits?.primary || rateLimits?.secondary;
   // Carry-forward: when today has no activity yet (e.g. just past midnight), show the most
   // recent active day so the bars don't reset to empty before the user opens Codex.
@@ -576,7 +677,11 @@ function buildMenubarData(daily, options = {}) {
     ? (carryEntry.date === shiftDateStr(todayDate, -1) ? "Yesterday" : "Recent")
     : "Today";
   const primaryPct = hasPrimaryRateLimit ? Math.max(0, Math.min(1, primaryUsedPercent / 100)) : null;
-  const secondaryPct = hasSecondaryRateLimit ? Math.max(0, Math.min(1, secondaryUsedPercent / 100)) : Math.min(weeklyUsage / weeklyCeiling, 1);
+  const secondaryPct = hasOfficialWeeklyUsage
+    ? Math.max(0, Math.min(1, officialWeeklyPct / 100))
+    : hasSecondaryRateLimit
+      ? Math.max(0, Math.min(1, secondaryUsedPercent / 100))
+      : Math.min(weeklyUsage / weeklyCeiling, 1);
 
   // Always compute a projected 5h window for the time-progress bar.
   // If the last known reset is still in the future, use it directly.
@@ -599,23 +704,37 @@ function buildMenubarData(daily, options = {}) {
       projectedWindowStart = projectedWindowEnd - FIVE_HOUR_WINDOW_SEC;
     }
   }
+  if (hasOfficialFiveHourUsage && Number.isInteger(officialUsage?.fiveHour?.resetEpoch)) {
+    projectedWindowEnd = officialUsage.fiveHour.resetEpoch;
+    projectedWindowStart = projectedWindowEnd - FIVE_HOUR_WINDOW_SEC;
+  }
 
   const hasLocalPrimaryUsage = displayDayUsage > 0 || displayDayPrompts > 0;
-  const localFiveHour = buildLocalFiveHourEstimate(options.threads, nowSec);
-  const localFallbackPct = localFiveHour?.pct ?? null;
-  const localFallbackUsage = localFiveHour?.usage ?? displayDayUsage;
-  const localFallbackCeiling = localFiveHour?.ceiling ?? null;
-  const primaryMetric = hasPrimaryRateLimit || projectedWindowEnd !== null || hasLocalPrimaryUsage || !hasOfficialRateLimit ? {
-    usage: hasPrimaryRateLimit ? Math.round(primaryPct * 100) : localFallbackUsage,
-    ceiling: hasPrimaryRateLimit ? 100 : localFallbackCeiling,
-    pct: hasPrimaryRateLimit ? primaryPct : localFallbackPct,
-    usageDisplay: hasPrimaryRateLimit
+  const localFiveHour = buildLocalFiveHourEstimate(options.threads, nowSec, projectedWindowStart, projectedWindowEnd);
+  const hasProjectedFiveHourWindow = projectedWindowEnd !== null;
+  const localFallbackPct = localFiveHour?.pct ?? (hasProjectedFiveHourWindow ? 0 : null);
+  const localFallbackUsage = localFiveHour?.usage ?? (hasProjectedFiveHourWindow ? 0 : displayDayUsage);
+  const localFallbackCeiling = localFiveHour?.ceiling ?? (hasProjectedFiveHourWindow ? 100 : null);
+  const officialFiveHourFraction = hasOfficialFiveHourUsage ? Math.max(0, Math.min(1, officialFiveHourPct / 100)) : null;
+  const primaryMetric = hasOfficialFiveHourUsage || hasPrimaryRateLimit || projectedWindowEnd !== null || hasLocalPrimaryUsage || !hasOfficialRateLimit ? {
+    usage: hasOfficialFiveHourUsage
+      ? Math.round(officialFiveHourPct)
+      : hasPrimaryRateLimit
+        ? Math.round(primaryPct * 100)
+        : localFallbackUsage,
+    ceiling: hasOfficialFiveHourUsage || hasPrimaryRateLimit ? 100 : localFallbackCeiling,
+    pct: hasOfficialFiveHourUsage ? officialFiveHourFraction : hasPrimaryRateLimit ? primaryPct : localFallbackPct,
+    usageDisplay: hasOfficialFiveHourUsage
+      ? `${Math.round(officialFiveHourPct)}% ${officialUsage.fiveHour.isRemaining ? "remaining" : "used"}`
+      : hasPrimaryRateLimit
       ? `${Math.round(primaryPct * 100)}% used`
       : localFallbackPct != null
         ? `${Math.round(localFallbackPct * 100)}% est.`
         : `${compactNumber(displayDayUsage)} tok`,
-    ceilingDisplay: hasPrimaryRateLimit || localFallbackCeiling == null ? null : `${compactNumber(localFallbackCeiling)} tok est.`,
-    detail: hasPrimaryRateLimit
+    ceilingDisplay: hasOfficialFiveHourUsage || hasPrimaryRateLimit || localFallbackCeiling == null ? null : `${compactNumber(localFallbackCeiling)} tok est.`,
+    detail: hasOfficialFiveHourUsage && Number.isInteger(officialUsage.fiveHour.resetEpoch)
+      ? formatResetDetail(officialUsage.fiveHour.resetEpoch)
+      : hasPrimaryRateLimit
       ? formatResetDetail(rateLimits?.primary?.resets_at)
       : carryEntry !== null
         ? `${displayDayPrompts} prompts (${carryEntry.date})`
@@ -626,27 +745,37 @@ function buildMenubarData(daily, options = {}) {
             : `${displayDayPrompts} prompts`,
     startEpoch: projectedWindowStart,
     endEpoch: projectedWindowEnd,
-    isRemaining: false,
+    isRemaining: hasOfficialFiveHourUsage ? officialUsage.fiveHour.isRemaining : false,
   } : null;
 
   return {
     updatedAt: new Date().toISOString(),
     title: "Codex",
     reportPath: path.resolve(ROOT, "report.html"),
-    primaryLabel: hasPrimaryRateLimit ? "5h used" : primaryLabelFallback,
-    secondaryLabel: hasSecondaryRateLimit ? "Week used" : "7 Days",
+    primaryLabel: hasOfficialFiveHourUsage || hasPrimaryRateLimit || projectedWindowEnd !== null || localFallbackPct != null ? "5h used" : primaryLabelFallback,
+    secondaryLabel: hasOfficialWeeklyUsage || hasSecondaryRateLimit ? "Week used" : "7 Days",
     primary: primaryMetric,
     secondary: {
-      usage: hasSecondaryRateLimit ? Math.round(secondaryPct * 100) : weeklyUsage,
-      ceiling: hasSecondaryRateLimit ? 100 : weeklyCeiling,
+      usage: hasOfficialWeeklyUsage ? Math.round(officialWeeklyPct) : hasSecondaryRateLimit ? Math.round(secondaryPct * 100) : weeklyUsage,
+      ceiling: hasOfficialWeeklyUsage || hasSecondaryRateLimit ? 100 : weeklyCeiling,
       pct: secondaryPct,
-      usageDisplay: hasSecondaryRateLimit ? `${Math.round(secondaryPct * 100)}% used` : `${compactNumber(weeklyUsage)} tok`,
-      ceilingDisplay: hasSecondaryRateLimit ? null : `${compactNumber(weeklyCeiling)} tok`,
-      detail: hasSecondaryRateLimit ? formatResetDetail(rateLimits?.secondary?.resets_at) : `${weeklyPromptCount} prompts`,
-      endEpoch: Number.isInteger(rateLimits?.secondary?.resets_at) && rateLimits.secondary.resets_at > nowSec ? rateLimits.secondary.resets_at : null,
-      isRemaining: false,
+      usageDisplay: hasOfficialWeeklyUsage
+        ? `${Math.round(officialWeeklyPct)}% ${officialUsage.weekly.isRemaining ? "remaining" : "used"}`
+        : hasSecondaryRateLimit
+          ? `${Math.round(secondaryPct * 100)}% used`
+          : `${compactNumber(weeklyUsage)} tok`,
+      ceilingDisplay: hasOfficialWeeklyUsage || hasSecondaryRateLimit ? null : `${compactNumber(weeklyCeiling)} tok`,
+      detail: hasOfficialWeeklyUsage && Number.isInteger(officialUsage?.weekly?.resetEpoch)
+        ? formatResetDetail(officialUsage.weekly.resetEpoch)
+        : hasSecondaryRateLimit
+          ? formatResetDetail(rateLimits?.secondary?.resets_at)
+          : `${weeklyPromptCount} prompts`,
+      endEpoch: Number.isInteger(officialUsage?.weekly?.resetEpoch)
+        ? officialUsage.weekly.resetEpoch
+        : Number.isInteger(rateLimits?.secondary?.resets_at) && rateLimits.secondary.resets_at > nowSec ? rateLimits.secondary.resets_at : null,
+      isRemaining: hasOfficialWeeklyUsage ? officialUsage.weekly.isRemaining : false,
     },
-    weeklyCycle: buildWeeklyCycle(todayDate, rateLimits?.secondary?.resets_at),
+    weeklyCycle: buildWeeklyCycle(todayDate, Number.isInteger(officialUsage?.weekly?.resetEpoch) ? officialUsage.weekly.resetEpoch : rateLimits?.secondary?.resets_at),
   };
 }
 

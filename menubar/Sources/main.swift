@@ -318,6 +318,7 @@ final class ProviderStatusController {
     private var tertiaryMenuItem: NSMenuItem!
     private var openUsageMenuItem: NSMenuItem!
     private var accuracyMenuItem: NSMenuItem?
+    private var accuracyCheckMenuItem: NSMenuItem?
     private var extraCreditMenuItem: NSMenuItem?
     private var apiCreditMenuItem: NSMenuItem?
     private var openMenuItem: NSMenuItem!
@@ -385,6 +386,7 @@ final class ProviderStatusController {
             let checkNow = NSMenuItem(title: "Run accuracy check now", action: #selector(AppDelegate.runAccuracyCheckFromMenuItem(_:)), keyEquivalent: "")
             checkNow.target = target
             checkNow.representedObject = self
+            accuracyCheckMenuItem = checkNow
             menu.addItem(checkNow)
         }
 
@@ -565,21 +567,21 @@ final class ProviderStatusController {
         }
     }
 
-    func hoverSummaryLines() -> [String] {
-        var lines: [String] = []
+    func hoverSummaryLines() -> [HoverMetricRow] {
+        var lines: [HoverMetricRow] = []
         if let primaryDisplayLabel {
             if let metric = currentData?.resolvedPrimary, let pct = metric.pct {
-                lines.append(formatHoverMetricLine(label: "\(sectionTitle) \(primaryDisplayLabel)", metric: metric, pct: pct))
+                lines.append(formatHoverMetricLine(label: hoverProviderMetricLabel(primaryDisplayLabel), metric: metric, pct: pct))
             } else if let data = currentData, let metric = data.resolvedPrimary {
-                lines.append(formatHoverRawLine(label: "\(sectionTitle) \(data.resolvedPrimaryLabel)", metric: metric))
+                lines.append(formatHoverRawLine(label: hoverProviderMetricLabel(data.resolvedPrimaryLabel), metric: metric))
             } else {
-                lines.append(formatHoverStatusLine(label: "\(sectionTitle) \(primaryDisplayLabel)", status: "no data"))
+                lines.append(formatHoverStatusLine(label: hoverProviderMetricLabel(primaryDisplayLabel), status: "no data"))
             }
         }
         if let metric = currentData?.resolvedSecondary, let pct = metric.pct {
-            lines.append(formatHoverMetricLine(label: "\(sectionTitle) \(secondaryDisplayLabel)", metric: metric, pct: pct))
+            lines.append(formatHoverMetricLine(label: hoverProviderMetricLabel(secondaryDisplayLabel), metric: metric, pct: pct))
         } else {
-            lines.append(formatHoverStatusLine(label: "\(sectionTitle) \(secondaryDisplayLabel)", status: "no data"))
+            lines.append(formatHoverStatusLine(label: hoverProviderMetricLabel(secondaryDisplayLabel), status: "no data"))
         }
         if let data = currentData, let metric = data.resolvedTertiary {
             let tertiaryLabel = hoverTertiaryLabel(data.resolvedTertiaryLabel)
@@ -593,40 +595,75 @@ final class ProviderStatusController {
         return lines
     }
 
+    func hoverMenuRows(target: AppDelegate) -> [HoverRow] {
+        var rows: [HoverRow] = [.header(sectionTitle, theme.tint)]
+        appendMenuItem(primaryMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
+        appendMenuItem(secondaryMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
+        appendMenuItem(tertiaryMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
+        appendMenuItem(openMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
+        appendMenuItem(openUsageMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openUsagePage() }
+        appendMenuItem(accuracyMenuItem, to: &rows, tint: theme.tint)
+        appendMenuItem(accuracyCheckMenuItem, to: &rows, tint: theme.tint) { [weak target, weak self] in target?.runAccuracyCheck(for: self) }
+        appendMenuItem(extraCreditMenuItem, to: &rows, tint: theme.tint)
+        appendMenuItem(apiCreditMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openApiCredit() }
+        return rows
+    }
+
+    private func appendMenuItem(_ item: NSMenuItem?, to rows: inout [HoverRow], tint: NSColor?, action: (() -> Void)? = nil) {
+        guard let item, !item.isHidden, !item.title.isEmpty else { return }
+        if item.isEnabled, let action {
+            rows.append(.button(title: item.title, tint: tint, action: action))
+        } else {
+            rows.append(.text(item.title, tint))
+        }
+    }
+
+    private func hoverProviderMetricLabel(_ metricLabel: String) -> String {
+        let providerWidth = 8
+        if sectionTitle.count >= providerWidth {
+            return "\(sectionTitle) \(metricLabel)"
+        }
+        return sectionTitle + String(repeating: " ", count: providerWidth - sectionTitle.count) + metricLabel
+    }
+
     private func hoverTertiaryLabel(_ label: String) -> String {
         if label.localizedCaseInsensitiveContains("fable") {
-            return "  Fable 5"
+            return "Fable 5"
         }
         return label
     }
 
-    private func formatHoverMetricLine(label: String, metric: MenubarData.MetricData, pct: Double) -> String {
+    private func formatHoverMetricLine(label: String, metric: MenubarData.MetricData, pct: Double) -> HoverMetricRow {
+        if let estimate = metric.usageDisplay, estimate.localizedCaseInsensitiveContains("est") {
+            let suffix = timeLeftString(epoch: metric.endEpoch).map { " (\($0) left)" } ?? ""
+            return HoverMetricRow(label: label, value: estimate, suffix: suffix)
+        }
         let usedFraction = metric.isRemaining == true ? 1 - pct : pct
         let usedPct = Int((max(0, min(1, usedFraction)) * 100).rounded())
-        let percent = String(format: "%3d%%", usedPct)
+        let percent = "\(usedPct)%"
         let suffix = timeLeftString(epoch: metric.endEpoch).map { " used (\($0) left)" } ?? " used"
-        return "\(paddedHoverLabel(label)) \(percent)\(suffix)"
+        return HoverMetricRow(label: label, value: percent, suffix: suffix)
     }
 
-    private func formatHoverRawLine(label: String, metric: MenubarData.MetricData) -> String {
+    private func formatHoverRawLine(label: String, metric: MenubarData.MetricData) -> HoverMetricRow {
         let usage = metric.usageDisplay ?? String(format: "%.0f", metric.usage)
         if let detail = metric.detail, !detail.isEmpty {
-            return "\(paddedHoverLabel(label)) \(usage) (\(detail))"
+            return HoverMetricRow(label: label, value: usage, suffix: "(\(detail))")
         }
-        return "\(paddedHoverLabel(label)) \(usage)"
+        return HoverMetricRow(label: label, value: usage, suffix: "")
     }
 
-    private func formatHoverStatusLine(label: String, status: String) -> String {
-        "\(paddedHoverLabel(label)) \(status)"
-    }
-
-    private func paddedHoverLabel(_ label: String) -> String {
-        let width = 20
-        if label.count >= width { return label }
-        return label + String(repeating: " ", count: width - label.count)
+    private func formatHoverStatusLine(label: String, status: String) -> HoverMetricRow {
+        HoverMetricRow(label: label, value: status, suffix: "")
     }
 
     private func formatMetricPercent(metric: MenubarData.MetricData, pct: Double) -> String {
+        if let estimate = metric.usageDisplay, estimate.localizedCaseInsensitiveContains("est") {
+            if let timeLeft = timeLeftString(epoch: metric.endEpoch) {
+                return "\(estimate) (\(timeLeft) left)"
+            }
+            return estimate
+        }
         let usedFraction = metric.isRemaining == true ? 1 - pct : pct
         let usedPct = Int((max(0, min(1, usedFraction)) * 100).rounded())
         if let timeLeft = timeLeftString(epoch: metric.endEpoch) {
@@ -676,10 +713,19 @@ final class ProviderStatusController {
                 timeLeftString(epoch: resetEpoch).map { "in \($0)" },
                 "at \(formatResetTime(resetEpoch, includeDate: includeResetDate))",
             ].compactMap { $0 }
+            if let estimate = metric.usageDisplay, estimate.localizedCaseInsensitiveContains("est") {
+                return "\(label) - \(estimate) (window resets \(resetParts.joined(separator: " ")))"
+            }
             return "\(label) - \(usedPct)% used (\(leftPct)% left, window resets \(resetParts.joined(separator: " ")))"
         }
         if let detail = metric.detail, !detail.isEmpty {
+            if let estimate = metric.usageDisplay, estimate.localizedCaseInsensitiveContains("est") {
+                return "\(label) - \(estimate) (\(detail))"
+            }
             return "\(label) - \(usedPct)% used (\(leftPct)% left, \(detail))"
+        }
+        if let estimate = metric.usageDisplay, estimate.localizedCaseInsensitiveContains("est") {
+            return "\(label) - \(estimate)"
         }
         return "\(label) - \(usedPct)% used (\(leftPct)% left)"
     }
@@ -798,8 +844,25 @@ final class SingleInstanceGuard {
     }
 }
 
+struct HoverMetricRow {
+    let label: String
+    let value: String
+    let suffix: String
+    let tint: NSColor?
+
+    init(label: String, value: String, suffix: String, tint: NSColor? = nil) {
+        self.label = label
+        self.value = value
+        self.suffix = suffix
+        self.tint = tint
+    }
+}
+
 enum HoverRow {
-    case text(String)
+    case header(String, NSColor)
+    case text(String, NSColor?)
+    case button(title: String, tint: NSColor?, action: () -> Void)
+    case metric(HoverMetricRow)
     case separator
 }
 
@@ -815,12 +878,140 @@ final class HoverSeparatorView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 256, height: 1)
+        NSSize(width: 420, height: 1)
+    }
+}
+
+final class HoverMetricLineView: NSView {
+    private static let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+
+    init(row: HoverMetricRow) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 336, height: 20))
+
+        let label = NSTextField(labelWithString: row.label)
+        label.font = Self.font
+        label.textColor = row.tint ?? .labelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.frame = NSRect(x: 0, y: 1, width: 132, height: 18)
+        addSubview(label)
+
+        let value = NSTextField(labelWithString: row.value)
+        value.font = Self.font
+        value.textColor = row.tint ?? .labelColor
+        value.alignment = .right
+        value.lineBreakMode = .byClipping
+        value.frame = NSRect(x: 138, y: 1, width: 70, height: 18)
+        addSubview(value)
+
+        let suffix = NSTextField(labelWithString: row.suffix)
+        suffix.font = Self.font
+        suffix.textColor = row.tint ?? .labelColor
+        suffix.lineBreakMode = .byTruncatingTail
+        suffix.frame = NSRect(x: 214, y: 1, width: 122, height: 18)
+        addSubview(suffix)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 336, height: 20)
+    }
+}
+
+final class HoverTextLineView: NSView {
+    private static let normalFont = NSFont.systemFont(ofSize: 12)
+    private static let headerFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+
+    init(text: String, isHeader: Bool = false, tint: NSColor? = nil) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 420, height: 20))
+
+        if isHeader, let tint {
+            let stripe = NSView(frame: NSRect(x: 0, y: 4, width: 4, height: 12))
+            stripe.wantsLayer = true
+            stripe.layer?.backgroundColor = tint.cgColor
+            stripe.layer?.cornerRadius = 2
+            addSubview(stripe)
+        }
+
+        let label = NSTextField(labelWithString: text)
+        label.font = isHeader ? Self.headerFont : Self.normalFont
+        label.textColor = isHeader ? (tint ?? .labelColor) : (tint ?? .secondaryLabelColor)
+        label.lineBreakMode = .byTruncatingTail
+        label.frame = NSRect(x: isHeader ? 10 : 0, y: 1, width: isHeader ? 410 : 420, height: 18)
+        addSubview(label)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 420, height: 20)
+    }
+}
+
+final class HoverButtonLineView: NSView {
+    private let handler: () -> Void
+    private let label: NSTextField
+
+    init(title: String, tint: NSColor? = nil, action handler: @escaping () -> Void) {
+        self.handler = handler
+        self.label = NSTextField(labelWithString: title)
+        super.init(frame: NSRect(x: 0, y: 0, width: 420, height: 20))
+        label.font = NSFont.systemFont(ofSize: 12)
+        label.textColor = tint ?? .controlAccentColor
+        label.lineBreakMode = .byTruncatingTail
+        label.frame = NSRect(x: 0, y: 1, width: 420, height: 18)
+        addSubview(label)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 420, height: 20)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        handler()
+    }
+}
+
+final class HoverTrackingView: NSView {
+    var onMouseEntered: (() -> Void)?
+    var onMouseExited: (() -> Void)?
+    private var trackingAreaRef: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        if let trackingAreaRef {
+            removeTrackingArea(trackingAreaRef)
+        }
+        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways, .inVisibleRect]
+        let trackingArea = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
+        addTrackingArea(trackingArea)
+        trackingAreaRef = trackingArea
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onMouseEntered?()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onMouseExited?()
     }
 }
 
 final class UsageHoverViewController: NSViewController {
-    init(rows: [HoverRow]) {
+    init(rows: [HoverRow], onMouseEntered: @escaping () -> Void, onMouseExited: @escaping () -> Void) {
         super.init(nibName: nil, bundle: nil)
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -830,41 +1021,39 @@ final class UsageHoverViewController: NSViewController {
 
         for row in rows {
             switch row {
-            case .text(let line):
-                let label = NSTextField(labelWithString: Self.normalizeHoverLine(line))
-                label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-                label.textColor = .labelColor
-                label.lineBreakMode = .byTruncatingTail
-                stack.addArrangedSubview(label)
+            case .header(let text, let tint):
+                stack.addArrangedSubview(HoverTextLineView(text: text, isHeader: true, tint: tint))
+            case .text(let text, let tint):
+                stack.addArrangedSubview(HoverTextLineView(text: text, tint: tint))
+            case .button(let title, let tint, let action):
+                stack.addArrangedSubview(HoverButtonLineView(title: title, tint: tint, action: action))
+            case .metric(let row):
+                stack.addArrangedSubview(HoverMetricLineView(row: row))
             case .separator:
-                stack.addArrangedSubview(HoverSeparatorView(frame: NSRect(x: 0, y: 0, width: 256, height: 1)))
+                stack.addArrangedSubview(HoverSeparatorView(frame: NSRect(x: 0, y: 0, width: 420, height: 1)))
             }
         }
 
-        view = stack
-        view.frame = NSRect(x: 0, y: 0, width: 280, height: max(34, rows.count * 20 + 20))
+        let height = max(38, rows.count * 24 + 20)
+        let container = HoverTrackingView(frame: NSRect(x: 0, y: 0, width: 444, height: height))
+        container.onMouseEntered = onMouseEntered
+        container.onMouseExited = onMouseExited
+        stack.frame = container.bounds
+        container.addSubview(stack)
+        view = container
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    private static func normalizeHoverLine(_ line: String) -> String {
-        let lower = line.lowercased()
-        guard lower.contains("claude") && (lower.contains("fable") || lower.contains("fiber")) else {
-            return line
-        }
-        if let colon = line.firstIndex(of: ":") {
-            return "  Fable 5" + line[colon...]
-        }
-        return "  Fable 5"
-    }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var barView: CombinedBarView!
     private var controllers: [ProviderStatusController] = []
+    private var menuModel: NSMenu?
     private var refreshTimer: Timer?
     private var barRedrawTimer: Timer?
     private var hoverPopover: NSPopover?
@@ -925,7 +1114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 sectionTitle: "Claude",
                 fallbackBuildCommand: "npm run build:claude",
                 theme: ProviderTheme(
-                    tint: NSColor.systemOrange.withAlphaComponent(0.74)
+                    tint: NSColor(calibratedRed: 0.78, green: 0.32, blue: 0.08, alpha: 0.82)
                 ),
                 usagePageURL: URL(string: "https://claude.ai/settings/usage"),
                 apiCreditURL: URL(string: "https://platform.claude.com/dashboard"),
@@ -949,7 +1138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 sectionTitle: "Antigravity",
                 fallbackBuildCommand: "npm run build:antigravity",
                 theme: ProviderTheme(
-                    tint: NSColor.systemGreen.withAlphaComponent(0.72)
+                    tint: NSColor.systemTeal.withAlphaComponent(0.76)
                 ),
                 usagePageURL: URL(string: "https://antigravity.google/"),
                 primaryDisplayLabel: nil,
@@ -1013,7 +1202,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
 
-        statusItem.menu = menu
+        // Keep the NSMenu only as a state model for the hover panel; the click dropdown is replaced by mouseover.
+        menuModel = menu
     }
 
     private func makeWidthSliderItem() -> NSMenuItem {
@@ -1069,22 +1259,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         var rows: [HoverRow] = []
         for controller in controllers {
-            let group = controller.hoverSummaryLines()
+            let group = controller.hoverMenuRows(target: self)
             if group.isEmpty { continue }
             if !rows.isEmpty { rows.append(.separator) }
-            rows.append(contentsOf: group.map { .text($0) })
+            rows.append(contentsOf: group)
         }
+        if !rows.isEmpty { rows.append(.separator) }
+        rows.append(.text("Version: \(AppVersion.current)", nil))
+        rows.append(.separator)
+        rows.append(.button(title: "Refresh Now", tint: nil) { [weak self] in self?.runHoverRefreshNow() })
+        rows.append(.button(title: "Restart", tint: nil) { [weak self] in self?.runHoverRestartApp() })
+        rows.append(.text("Width", nil))
+        rows.append(.separator)
+        rows.append(.button(title: "Quit", tint: nil) { NSApp.terminate(nil) })
         guard !rows.isEmpty else { return }
 
         let popover = hoverPopover ?? NSPopover()
-        popover.behavior = .transient
+        popover.behavior = .applicationDefined
         popover.animates = false
-        popover.contentViewController = UsageHoverViewController(rows: rows)
+        popover.contentViewController = UsageHoverViewController(
+            rows: rows,
+            onMouseEntered: { [weak self] in self?.cancelHideUsageHover() },
+            onMouseExited: { [weak self] in self?.scheduleHideUsageHover() }
+        )
         hoverPopover = popover
 
         if !popover.isShown {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
+    }
+
+    private func cancelHideUsageHover() {
+        hoverHideWorkItem?.cancel()
+        hoverHideWorkItem = nil
     }
 
     private func scheduleHideUsageHover() {
@@ -1093,7 +1300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.hoverPopover?.performClose(nil)
         }
         hoverHideWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
     }
 
     private func refreshClaudeMenubarData() {
@@ -1164,9 +1371,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshAll()
     }
 
+    private func runHoverRefreshNow() {
+        refreshAll()
+    }
+
     @objc private func restartApp() {
         // launchd (KeepAlive: true) restarts the process automatically after termination
         NSApp.terminate(nil)
+    }
+
+    private func runHoverRestartApp() {
+        restartApp()
     }
 
     @objc func openDashboardFromMenuItem(_ sender: NSMenuItem) {
@@ -1185,7 +1400,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func runAccuracyCheckFromMenuItem(_ sender: NSMenuItem) {
+        guard let controller = sender.representedObject as? ProviderStatusController else { return }
+        runAccuracyCheck(for: controller)
+    }
+
+    func runAccuracyCheck(for controller: ProviderStatusController?) {
         guard !accuracyInFlight else { return }
+        guard controller?.accuracyURL != nil else { return }
         guard FileManager.default.fileExists(atPath: Self.accuracyScriptURL.path) else { return }
         accuracyInFlight = true
         buildQueue.async { [weak self] in

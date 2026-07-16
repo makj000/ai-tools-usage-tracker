@@ -151,6 +151,7 @@ test("shows 5h and weekly window ends when current usage is zero", () => {
   const secondaryResetEpoch = nowSec + 4 * 24 * 60 * 60;
   const data = buildMenubarData([], {
     nowSec,
+    officialUsage: null,
     rateLimits: {
       primary: { used_percent: 0, resets_at: primaryResetEpoch },
       secondary: { used_percent: 0, resets_at: secondaryResetEpoch },
@@ -177,6 +178,7 @@ test("keeps reset times when 5h and weekly windows have nonzero usage", () => {
   const secondaryResetEpoch = nowSec + 3 * 24 * 60 * 60;
   const data = buildMenubarData([], {
     nowSec,
+    officialUsage: null,
     rateLimits: {
       primary: { used_percent: 34, resets_at: primaryResetEpoch },
       secondary: { used_percent: 57, resets_at: secondaryResetEpoch },
@@ -202,6 +204,7 @@ test("projects a stale 5h reset forward so the menu still has a window end", () 
   const staleResetEpoch = Math.floor(Date.parse("2026-06-19T12:00:00.000Z") / 1000);
   const data = buildMenubarData([], {
     nowSec,
+    officialUsage: null,
     rateLimits: {
       primary: { used_percent: 44, resets_at: staleResetEpoch },
       secondary: null,
@@ -218,6 +221,7 @@ test("ignores impossible future primary reset for the 5h window", () => {
   const impossibleResetEpoch = nowSec + 134 * 60 * 60;
   const data = buildMenubarData([], {
     nowSec,
+    officialUsage: null,
     rateLimits: {
       primary: { used_percent: 67, resets_at: impossibleResetEpoch },
       secondary: null,
@@ -233,6 +237,7 @@ test("treats 10080-minute primary limit as weekly and leaves 5h empty", () => {
   const weeklyResetEpoch = nowSec + 134 * 60 * 60;
   const data = buildMenubarData([], {
     nowSec,
+    officialUsage: null,
     rateLimits: {
       primary: { used_percent: 67, window_minutes: 10080, resets_at: weeklyResetEpoch },
       secondary: null,
@@ -246,13 +251,14 @@ test("treats 10080-minute primary limit as weekly and leaves 5h empty", () => {
   assert.match(data.secondary.detail, /^resets /);
 });
 
-test("falls back to local today usage when only a weekly official limit is present", () => {
+test("falls back to local today usage when only a weekly official limit is present and no 5h window exists", () => {
   const nowSec = Math.floor(Date.parse("2026-07-14T19:40:00.000Z") / 1000);
   const weeklyResetEpoch = nowSec + 134 * 60 * 60;
   const data = buildMenubarData([
     { date: "2026-07-14", threads: 2, prompts: 8, tokens: 1200 },
   ], {
     nowSec,
+    officialUsage: null,
     rateLimits: {
       primary: { used_percent: 67, window_minutes: 10080, resets_at: weeklyResetEpoch },
       secondary: null,
@@ -295,6 +301,7 @@ test("estimates 5h percent from local recent thread activity", () => {
     { date: "2026-07-14", threads: 2, prompts: 8, tokens: 1200 },
   ], {
     nowSec,
+    officialUsage: null,
     threads: [
       { rolloutPath },
     ],
@@ -304,12 +311,38 @@ test("estimates 5h percent from local recent thread activity", () => {
     },
   });
 
-  assert.strictEqual(data.primaryLabel, "Today");
+  assert.strictEqual(data.primaryLabel, "5h used");
   assert.strictEqual(data.primary.usage, 200);
   assert.strictEqual(data.primary.ceiling, 400);
   assert.strictEqual(data.primary.pct, 0.5);
   assert.strictEqual(data.primary.usageDisplay, "50% est.");
   assert.strictEqual(data.primary.detail, "estimated from local 5h activity");
+});
+
+test("keeps Codex 5h percentage output when only a projected window exists", () => {
+  const nowSec = Math.floor(Date.parse("2026-07-14T19:40:00.000Z") / 1000);
+  const staleFiveHourReset = Math.floor(Date.parse("2026-07-14T17:00:00.000Z") / 1000);
+  const weeklyResetEpoch = nowSec + 134 * 60 * 60;
+  const data = buildMenubarData([
+    { date: "2026-07-14", threads: 2, prompts: 8, tokens: 1200 },
+  ], {
+    nowSec,
+    officialUsage: null,
+    fiveHourResetAnchor: staleFiveHourReset,
+    threads: [],
+    rateLimits: {
+      primary: { used_percent: 67, window_minutes: 10080, resets_at: weeklyResetEpoch },
+      secondary: null,
+    },
+  });
+
+  assert.strictEqual(data.primaryLabel, "5h used");
+  assert.strictEqual(data.primary.usageDisplay, "0% est.");
+  assert.strictEqual(data.primary.pct, 0);
+  assert.strictEqual(data.primary.ceiling, 100);
+  assert.strictEqual(data.primary.startEpoch, Math.floor(Date.parse("2026-07-14T17:00:00.000Z") / 1000));
+  assert.strictEqual(data.primary.endEpoch, Math.floor(Date.parse("2026-07-14T22:00:00.000Z") / 1000));
+  assert.match(data.primary.detail, /^resets /);
 });
 
 test("projects a 5h reset window for estimated local usage", () => {
@@ -335,6 +368,7 @@ test("projects a 5h reset window for estimated local usage", () => {
     { date: "2026-07-14", threads: 2, prompts: 8, tokens: 1200 },
   ], {
     nowSec,
+    officialUsage: null,
     threads: [
       { rolloutPath },
     ],
@@ -347,6 +381,127 @@ test("projects a 5h reset window for estimated local usage", () => {
   assert.strictEqual(data.primary.startEpoch, Math.floor(Date.parse("2026-07-14T17:00:00.000Z") / 1000));
   assert.strictEqual(data.primary.endEpoch, Math.floor(Date.parse("2026-07-14T22:00:00.000Z") / 1000));
   assert.match(data.primary.detail, /^resets /);
+});
+
+test("calibrates estimated 5h percent from historical official samples", () => {
+  const nowSec = Math.floor(Date.parse("2026-07-14T19:40:00.000Z") / 1000);
+  const priorResetEpoch = nowSec - 4 * 60 * 60;
+  const weeklyResetEpoch = nowSec + 134 * 60 * 60;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-rollout-"));
+  const rolloutPath = path.join(tmpDir, "rollout-test.jsonl");
+  fs.writeFileSync(rolloutPath, [
+    JSON.stringify({
+      timestamp: new Date((nowSec - 6 * 60 * 60) * 1000).toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { total_tokens: 200 } },
+        rate_limits: {
+          primary: { used_percent: 20, window_minutes: 300, resets_at: priorResetEpoch },
+        },
+      },
+    }),
+    JSON.stringify({
+      timestamp: new Date((nowSec - 60 * 60) * 1000).toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { total_tokens: 500 } },
+      },
+    }),
+  ].join("\n") + "\n");
+  const data = buildMenubarData([
+    { date: "2026-07-14", threads: 2, prompts: 8, tokens: 1200 },
+  ], {
+    nowSec,
+    officialUsage: null,
+    threads: [
+      { rolloutPath },
+    ],
+    rateLimits: {
+      primary: { used_percent: 67, window_minutes: 10080, resets_at: weeklyResetEpoch },
+      secondary: null,
+    },
+  });
+
+  assert.strictEqual(data.primary.usage, 500);
+  assert.strictEqual(data.primary.ceiling, 1000);
+  assert.strictEqual(data.primary.pct, 0.5);
+  assert.strictEqual(data.primary.usageDisplay, "50% est.");
+});
+
+test("prefers official usage page 5h remaining over local estimates", () => {
+  const nowSec = Math.floor(Date.parse("2026-07-14T19:40:00.000Z") / 1000);
+  const fiveHourReset = nowSec + 2 * 60 * 60;
+  const weeklyReset = nowSec + 4 * 24 * 60 * 60;
+  const data = buildMenubarData([
+    { date: "2026-07-14", threads: 2, prompts: 8, tokens: 1200 },
+  ], {
+    nowSec,
+    officialUsage: {
+      fiveHour: { pct: 94, isRemaining: true, resetEpoch: fiveHourReset },
+      weekly: { pct: 88, isRemaining: true, resetEpoch: weeklyReset },
+    },
+    rateLimits: null,
+  });
+
+  assert.strictEqual(data.primaryLabel, "5h used");
+  assert.strictEqual(data.primary.usageDisplay, "94% remaining");
+  assert.strictEqual(data.primary.pct, 0.94);
+  assert.strictEqual(data.primary.isRemaining, true);
+  assert.strictEqual(data.primary.startEpoch, fiveHourReset - 5 * 60 * 60);
+  assert.strictEqual(data.primary.endEpoch, fiveHourReset);
+  assert.strictEqual(data.secondaryLabel, "Week used");
+  assert.strictEqual(data.secondary.usageDisplay, "88% remaining");
+  assert.strictEqual(data.secondary.pct, 0.88);
+  assert.strictEqual(data.secondary.isRemaining, true);
+  assert.strictEqual(data.secondary.endEpoch, weeklyReset);
+});
+
+test("caps estimated 5h percent below 100 when calibration is exceeded", () => {
+  const nowSec = Math.floor(Date.parse("2026-07-14T19:40:00.000Z") / 1000);
+  const priorResetEpoch = nowSec - 4 * 60 * 60;
+  const weeklyResetEpoch = nowSec + 134 * 60 * 60;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-rollout-"));
+  const rolloutPath = path.join(tmpDir, "rollout-test.jsonl");
+  fs.writeFileSync(rolloutPath, [
+    JSON.stringify({
+      timestamp: new Date((nowSec - 6 * 60 * 60) * 1000).toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { total_tokens: 200 } },
+        rate_limits: {
+          primary: { used_percent: 20, window_minutes: 300, resets_at: priorResetEpoch },
+        },
+      },
+    }),
+    JSON.stringify({
+      timestamp: new Date((nowSec - 60 * 60) * 1000).toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { total_tokens: 1200 } },
+      },
+    }),
+  ].join("\n") + "\n");
+  const data = buildMenubarData([
+    { date: "2026-07-14", threads: 2, prompts: 8, tokens: 1400 },
+  ], {
+    nowSec,
+    officialUsage: null,
+    threads: [
+      { rolloutPath },
+    ],
+    rateLimits: {
+      primary: { used_percent: 67, window_minutes: 10080, resets_at: weeklyResetEpoch },
+      secondary: null,
+    },
+  });
+
+  assert(Math.abs(data.primary.ceiling - (1200 / 0.95)) < 0.000001);
+  assert.strictEqual(data.primary.pct, 0.95);
+  assert.strictEqual(data.primary.usageDisplay, "95% est.");
 });
 
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`);

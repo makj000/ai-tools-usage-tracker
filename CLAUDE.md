@@ -132,6 +132,10 @@ Optional JSON file read by build.js on every build. Supported fields:
 
 A self-rescheduling subsystem that keeps the menu-bar estimates honest against the official usage pages. Lives in the top-level `accuracy/` dir (parallel to `claude/`, `codex/`, `menubar/`).
 
+Codex menu-bar 5h usage is percentage-first: use the official 5-hour usage-page value when present; otherwise show an estimated `% est.` value whenever a 5h window anchor can be derived. Do not show token-only text for the Codex 5h row when a 5h window exists.
+
+Codex 菜单栏的 5 小时用量必须优先显示百分比：有官方 5 小时用量页数据时使用官方值；否则只要能推导出 5 小时窗口锚点，就显示估算的 `% est.`。当 5 小时窗口存在时，不要在 Codex 5h 行只显示 token 文本。
+
 - `scrape.js` — Playwright persistent-context scraper. `--login` opens a headed window to sign into `claude.ai` + `chatgpt.com` once; thereafter headless. Captures visible text + full-page screenshot per provider into `accuracy/snapshots/`, sets a `loginWall` flag, writes `snapshots/latest.json`. It deliberately does **not** parse numbers — extraction is delegated to the agent so it survives page redesigns.
 - `expected.js` — reads the per-provider menubar JSON the Swift app shows (`~/.claude/claude-tracker-menubar.json`, `~/.codex/codex-tracker-menubar.json`) and normalizes the displayed window/weekly metrics for comparison. Note Codex shows `% left` (remaining) vs Claude `% used`.
 - `prompt.md` — agent instructions: normalize used-vs-remaining, compute per-metric `delta_pp`, flag `off` when `|delta| > 5`pp, prefer config-seed calibration over code edits, run tests and revert on failure, emit a strict JSON verdict.
