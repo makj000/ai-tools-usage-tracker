@@ -9,6 +9,7 @@ const {
   buildProjects,
   buildOverview,
   formatProjectLabel,
+  detectOfficialFiveHourReset,
   groupPromptsBySession,
   readChatGPTDesktopActivity,
   shortProjectName,
@@ -456,6 +457,41 @@ test("prefers official usage page 5h remaining over local estimates", () => {
   assert.strictEqual(data.secondary.pct, 0.88);
   assert.strictEqual(data.secondary.isRemaining, true);
   assert.strictEqual(data.secondary.endEpoch, weeklyReset);
+});
+
+test("marks official 5h usage resets in the menubar metric", () => {
+  const nowSec = Math.floor(Date.parse("2026-07-14T19:40:00.000Z") / 1000);
+  const fiveHourReset = nowSec + 5 * 60 * 60;
+  const data = buildMenubarData([
+    { date: "2026-07-14", threads: 2, prompts: 8, tokens: 1200 },
+  ], {
+    nowSec,
+    officialUsage: {
+      fiveHour: { pct: 100, isRemaining: true, resetEpoch: fiveHourReset },
+      capturedAt: "2026-07-14T19:40:00.000Z",
+      fiveHourResetDetected: true,
+    },
+    rateLimits: null,
+  });
+
+  assert.strictEqual(data.primaryLabel, "5h used");
+  assert.strictEqual(data.primary.usageDisplay, "100% remaining");
+  assert.strictEqual(data.primary.detail, "usage reset detected");
+  assert.strictEqual(data.primary.resetDetected, true);
+  assert.strictEqual(data.primary.endEpoch, fiveHourReset);
+});
+
+test("detects official 5h reset from consecutive usage snapshots", () => {
+  const previous = {
+    capturedAt: "2026-07-14T19:20:00.000Z",
+    fiveHour: { pct: 62, isRemaining: false, resetEpoch: 1784072400 },
+  };
+  const current = {
+    capturedAt: "2026-07-14T19:40:00.000Z",
+    fiveHour: { pct: 100, isRemaining: true, resetEpoch: 1784090400 },
+  };
+
+  assert.strictEqual(detectOfficialFiveHourReset(current, previous), true);
 });
 
 test("caps estimated 5h percent below 100 when calibration is exceeded", () => {

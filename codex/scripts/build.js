@@ -130,6 +130,72 @@ function parseOfficialUsageBlock(text, heading) {
   };
 }
 
+function usedPctFromOfficial(block) {
+  if (!block || typeof block.pct !== "number") return null;
+  return block.isRemaining ? 100 - block.pct : block.pct;
+}
+
+function codexSnapshotCapturedAt(fileName) {
+  const match = String(fileName || "").match(/^codex-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)\.txt$/);
+  if (!match) return null;
+  const iso = match[1].replace(/T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, "T$1:$2:$3.$4Z");
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+function readOfficialUsageTextFile(fileName) {
+  if (!fileName) return null;
+  const capturedAt = codexSnapshotCapturedAt(fileName);
+  if (!capturedAt) return null;
+  let text = "";
+  try {
+    text = fs.readFileSync(path.join(ACCURACY_SNAPSHOTS_DIR, fileName), "utf8");
+  } catch {
+    return null;
+  }
+  const fiveHour = parseOfficialUsageBlock(text, "5 hour usage limit");
+  const weekly = parseOfficialUsageBlock(text, "Weekly usage limit");
+  if (!fiveHour && !weekly) return null;
+  return { fiveHour, weekly, capturedAt };
+}
+
+function readPreviousOfficialCodexUsage(currentTextFile, currentCapturedAt) {
+  if (!currentTextFile || !currentCapturedAt) return null;
+  const currentMs = Date.parse(currentCapturedAt);
+  if (!Number.isFinite(currentMs)) return null;
+  let files = [];
+  try {
+    files = fs.readdirSync(ACCURACY_SNAPSHOTS_DIR);
+  } catch {
+    return null;
+  }
+  return files
+    .filter((fileName) => fileName !== currentTextFile && /^codex-.*\.txt$/.test(fileName))
+    .map((fileName) => ({ fileName, capturedAt: codexSnapshotCapturedAt(fileName) }))
+    .filter((entry) => entry.capturedAt && Date.parse(entry.capturedAt) < currentMs)
+    .sort((a, b) => Date.parse(b.capturedAt) - Date.parse(a.capturedAt))
+    .map((entry) => readOfficialUsageTextFile(entry.fileName))
+    .find((usage) => usage?.fiveHour) || null;
+}
+
+function detectOfficialFiveHourReset(currentUsage, previousUsage) {
+  const current = currentUsage?.fiveHour;
+  const previous = previousUsage?.fiveHour;
+  if (!current || !previous) return false;
+  const currentUsed = usedPctFromOfficial(current);
+  const previousUsed = usedPctFromOfficial(previous);
+  if (currentUsed == null || previousUsed == null) return false;
+  const currentCaptured = Date.parse(currentUsage.capturedAt || "");
+  const previousCaptured = Date.parse(previousUsage.capturedAt || "");
+  if (!Number.isFinite(currentCaptured) || !Number.isFinite(previousCaptured) || currentCaptured <= previousCaptured) return false;
+  if (currentCaptured - previousCaptured > 24 * 3600 * 1000) return false;
+  const usageDropped = previousUsed >= 10 && currentUsed <= Math.max(5, previousUsed - 25);
+  const resetAdvanced = Number.isInteger(current.resetEpoch) &&
+    Number.isInteger(previous.resetEpoch) &&
+    current.resetEpoch > previous.resetEpoch + RATE_LIMIT_CLOCK_SKEW_SEC;
+  return usageDropped || (resetAdvanced && currentUsed <= 10);
+}
+
 function readOfficialCodexUsage(options = {}) {
   if (options.officialUsage !== undefined) return options.officialUsage;
   const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
@@ -153,7 +219,12 @@ function readOfficialCodexUsage(options = {}) {
   const fiveHour = parseOfficialUsageBlock(text, "5 hour usage limit");
   const weekly = parseOfficialUsageBlock(text, "Weekly usage limit");
   if (!fiveHour && !weekly) return null;
-  return { fiveHour, weekly, capturedAt: codex.capturedAt };
+  const usage = { fiveHour, weekly, capturedAt: codex.capturedAt };
+  const previousUsage = options.previousOfficialUsage === undefined
+    ? readPreviousOfficialCodexUsage(codex.textFile, codex.capturedAt)
+    : options.previousOfficialUsage;
+  usage.fiveHourResetDetected = detectOfficialFiveHourReset(usage, previousUsage);
+  return usage;
 }
 
 function groupPromptsBySession(history) {
@@ -663,6 +734,7 @@ function buildMenubarData(daily, options = {}) {
   const secondaryResetFresh = Number.isInteger(rateLimits?.secondary?.resets_at) && rateLimits.secondary.resets_at > nowSec;
   const hasOfficialFiveHourUsage = typeof officialFiveHourPct === "number";
   const hasOfficialWeeklyUsage = typeof officialWeeklyPct === "number";
+  const officialFiveHourResetDetected = hasOfficialFiveHourUsage && officialUsage?.fiveHourResetDetected === true;
   const hasPrimaryRateLimit = !hasOfficialFiveHourUsage && typeof primaryUsedPercent === "number" && primaryResetFresh;
   const hasSecondaryRateLimit = !hasOfficialWeeklyUsage && typeof secondaryUsedPercent === "number" && secondaryResetFresh;
   const hasOfficialRateLimit = rateLimits?.primary || rateLimits?.secondary;
@@ -732,7 +804,9 @@ function buildMenubarData(daily, options = {}) {
         ? `${Math.round(localFallbackPct * 100)}% est.`
         : `${compactNumber(displayDayUsage)} tok`,
     ceilingDisplay: hasOfficialFiveHourUsage || hasPrimaryRateLimit || localFallbackCeiling == null ? null : `${compactNumber(localFallbackCeiling)} tok est.`,
-    detail: hasOfficialFiveHourUsage && Number.isInteger(officialUsage.fiveHour.resetEpoch)
+    detail: officialFiveHourResetDetected
+      ? "usage reset detected"
+      : hasOfficialFiveHourUsage && Number.isInteger(officialUsage.fiveHour.resetEpoch)
       ? formatResetDetail(officialUsage.fiveHour.resetEpoch)
       : hasPrimaryRateLimit
       ? formatResetDetail(rateLimits?.primary?.resets_at)
@@ -746,6 +820,7 @@ function buildMenubarData(daily, options = {}) {
     startEpoch: projectedWindowStart,
     endEpoch: projectedWindowEnd,
     isRemaining: hasOfficialFiveHourUsage ? officialUsage.fiveHour.isRemaining : false,
+    resetDetected: officialFiveHourResetDetected,
   } : null;
 
   return {
@@ -844,6 +919,7 @@ module.exports = {
   buildOverview,
   buildProjects,
   buildThreads,
+  detectOfficialFiveHourReset,
   formatProjectLabel,
   groupPromptsBySession,
   laDate,

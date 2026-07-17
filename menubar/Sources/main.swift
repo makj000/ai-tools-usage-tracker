@@ -50,6 +50,7 @@ struct MenubarData: Codable {
         let startEpoch: Double?
         let endEpoch: Double?
         let isRemaining: Bool?
+        let resetDetected: Bool?
     }
 
     struct WeeklyCycleData: Codable {
@@ -635,13 +636,17 @@ final class ProviderStatusController {
 
     private func formatHoverMetricLine(label: String, metric: MenubarData.MetricData, pct: Double) -> HoverMetricRow {
         if let estimate = metric.usageDisplay, estimate.localizedCaseInsensitiveContains("est") {
-            let suffix = timeLeftString(epoch: metric.endEpoch).map { " (\($0) left)" } ?? ""
+            let suffix = timeLeftString(epoch: metric.endEpoch).map {
+                metric.resetDetected == true ? " (\($0) left, reset detected)" : " (\($0) left)"
+            } ?? (metric.resetDetected == true ? " (reset detected)" : "")
             return HoverMetricRow(label: label, value: estimate, suffix: suffix)
         }
         let usedFraction = metric.isRemaining == true ? 1 - pct : pct
         let usedPct = Int((max(0, min(1, usedFraction)) * 100).rounded())
         let percent = "\(usedPct)%"
-        let suffix = timeLeftString(epoch: metric.endEpoch).map { " used (\($0) left)" } ?? " used"
+        let suffix = timeLeftString(epoch: metric.endEpoch).map {
+            metric.resetDetected == true ? " used (\($0) left, reset detected)" : " used (\($0) left)"
+        } ?? (metric.resetDetected == true ? " used (reset detected)" : " used")
         return HoverMetricRow(label: label, value: percent, suffix: suffix)
     }
 
@@ -713,10 +718,11 @@ final class ProviderStatusController {
                 timeLeftString(epoch: resetEpoch).map { "in \($0)" },
                 "at \(formatResetTime(resetEpoch, includeDate: includeResetDate))",
             ].compactMap { $0 }
+            let resetNote = metric.resetDetected == true ? ", usage reset detected" : ""
             if let estimate = metric.usageDisplay, estimate.localizedCaseInsensitiveContains("est") {
-                return "\(label) - \(estimate) (window resets \(resetParts.joined(separator: " ")))"
+                return "\(label) - \(estimate) (window resets \(resetParts.joined(separator: " "))\(resetNote))"
             }
-            return "\(label) - \(usedPct)% used (\(leftPct)% left, window resets \(resetParts.joined(separator: " ")))"
+            return "\(label) - \(usedPct)% used (\(leftPct)% left, window resets \(resetParts.joined(separator: " "))\(resetNote))"
         }
         if let detail = metric.detail, !detail.isEmpty {
             if let estimate = metric.usageDisplay, estimate.localizedCaseInsensitiveContains("est") {

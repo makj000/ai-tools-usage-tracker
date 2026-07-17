@@ -113,5 +113,12 @@ test("keeps value text in a fixed right-aligned column", () => {
   assert.match(source, /rows\.count \* 24 \+ 20/);
 });
 
+test("surfaces Codex reset detection in menu and hover rows", () => {
+  assert.match(source, /let resetDetected: Bool\?/);
+  assert.match(source, /usage reset detected/);
+  assert.match(source, /left, reset detected/);
+  assert.match(source, /used \(reset detected\)/);
+});
+
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);
