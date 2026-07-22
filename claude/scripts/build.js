@@ -40,8 +40,9 @@ const MODEL_PRICING = {
   "default":           { input: 3.0, output: 15.0, cacheWrite: 3.75, cacheRead: 0.30 },
 };
 
-// Fable 5 has its own weekly usage limit on claude.ai, tracked separately
-// from the shared weekly limit (like the old Opus weekly limit).
+// Fable 5 usage is billed from claude.ai's pay-as-you-go usage credits rather
+// than counting against a plan quota, so it's always classified as extra
+// credit (see isExtraCredit in readAllTranscripts).
 const FABLE_MODEL_RE = /fable/i;
 
 function getPricing(model) {
@@ -110,30 +111,6 @@ function readStatuslineRateLimits() {
     return JSON.parse(fs.readFileSync(STATUSLINE_RATE_LIMIT_CACHE_PATH, "utf8")).rate_limits || null;
   } catch {
     return null;
-  }
-}
-
-// Find the Fable 5 limit entry in the statusline rate-limit cache. Claude Code
-// hasn't stabilized the field name, so match any key containing "fable"
-// (e.g. seven_day_fable, fable_weekly).
-function findFableRateLimit(rateLimits) {
-  if (!rateLimits) return null;
-  for (const [key, val] of Object.entries(rateLimits)) {
-    if (FABLE_MODEL_RE.test(key) && val && typeof val === "object") return val;
-  }
-  return null;
-}
-
-// Overlay the official Fable 5 % (when Claude Code reports one and it's fresh)
-// onto the transcript-derived estimate so the dashboard can prefer it.
-function applyOfficialFableLimit(windowUsage, rateLimits, nowSec = Math.floor(Date.now() / 1000)) {
-  if (!windowUsage?.fableWeekly) return;
-  const fable = findFableRateLimit(rateLimits);
-  const resetsAt = fable?.resets_at;
-  const fresh = typeof resetsAt === "number" && resetsAt > nowSec;
-  if (fresh && typeof fable.used_percentage === "number") {
-    windowUsage.fableWeekly.officialPct = fable.used_percentage;
-    windowUsage.fableWeekly.resetsAt = resetsAt;
   }
 }
 
@@ -347,7 +324,7 @@ function readAllTranscripts() {
           const ts = entry.timestamp;
           const day = ts ? ts.slice(0, 10) : "unknown";
           const turnEpoch = ts ? new Date(ts).getTime() : 0;
-          const extra = isExtraCredit(turnEpoch);
+          const extra = isExtraCredit(turnEpoch) || FABLE_MODEL_RE.test(model);
 
           if (!sessions[sessionId]) {
             sessions[sessionId] = { sessionId, project: projectName, model, counts: zeroCounts(), cost: 0, extraCost: 0, firstTs: ts, lastTs: ts };
@@ -772,7 +749,6 @@ function buildWindowUsage(coworkSessions) {
               ts: entry.timestamp,
               epoch: new Date(entry.timestamp).getTime(),
               cost,
-              isFable: FABLE_MODEL_RE.test(model),
             });
           }
         }
@@ -781,7 +757,7 @@ function buildWindowUsage(coworkSessions) {
   }
 
   // Merge Cowork (local-agent-mode) sessions — treated identically to Code turns
-  for (const s of (coworkSessions || [])) usageEntries.push({ ts: s.ts, epoch: s.epoch, cost: s.cost, isFable: FABLE_MODEL_RE.test(s.model || "") });
+  for (const s of (coworkSessions || [])) usageEntries.push({ ts: s.ts, epoch: s.epoch, cost: s.cost });
 
   if (!rateLimitHits.length) return null;
 
@@ -859,12 +835,10 @@ function buildWindowUsage(coworkSessions) {
 
   // Build per-day cost map from usage entries — use LA date, not UTC
   const dailyCosts = {};
-  const dailyFableCosts = {};
   for (const u of usageEntries) {
     const la = toLADate(u.ts);
     const day = `${la.year}-${String(la.month).padStart(2,"0")}-${String(la.day).padStart(2,"0")}`;
     dailyCosts[day] = (dailyCosts[day] || 0) + u.cost;
-    if (u.isFable) dailyFableCosts[day] = (dailyFableCosts[day] || 0) + u.cost;
   }
 
   // Days that had at least one rate_limit hit → daily ceiling data points (LA date)
@@ -908,13 +882,6 @@ function buildWindowUsage(coworkSessions) {
   // Current week
   const currentWeek = weekKey(todayLA);
   const weeklyUsage = weeklyCosts[currentWeek] || 0;
-
-  // Fable 5 usage in the current week — separate claude.ai limit, no
-  // rate-limit-derived ceiling; seed via fableWeeklyLimitSeed in config.json.
-  let fableWeeklyUsage = 0;
-  for (const [day, cost] of Object.entries(dailyFableCosts)) {
-    if (weekKey(day) === currentWeek) fableWeeklyUsage += cost;
-  }
 
   // Per-day breakdown for the current week (Sat–Fri, 7 days)
   const weekDays = Array.from({ length: 7 }, (_, i) => {
@@ -1002,19 +969,6 @@ function buildWindowUsage(coworkSessions) {
       dataPoints: weeklyCeilingValues.length,
       week: currentWeek,
       weekDays,
-    },
-    // Fable 5 weekly (separate claude.ai limit). Resets when the Sat–Fri week
-    // rolls over ("Resets Fri 11:59 PM" on claude.ai) — epoch seconds.
-    fableWeekly: {
-      usage: +fableWeeklyUsage.toFixed(4),
-      ceiling: null,
-      pct: null,
-      week: currentWeek,
-      resetsAt: (() => {
-        const [wy, wm, wd] = currentWeek.split("-").map(Number);
-        const end = new Date(Date.UTC(wy, wm - 1, wd + 7, 12));
-        return Math.floor(laEpoch(end.getUTCFullYear(), end.getUTCMonth() + 1, end.getUTCDate(), 0) / 1000);
-      })(),
     },
     // Monthly
     monthly: {
@@ -1115,10 +1069,6 @@ function applyUsageConfig(config, windowUsage, tokens) {
     windowUsage.weekly.ceiling = config.weeklyLimitSeed;
     windowUsage.weekly.pct = Math.min(windowUsage.weekly.usage / config.weeklyLimitSeed, 1.5);
   }
-  if (config.fableWeeklyLimitSeed != null && windowUsage?.fableWeekly) {
-    windowUsage.fableWeekly.ceiling = config.fableWeeklyLimitSeed;
-    windowUsage.fableWeekly.pct = Math.min(windowUsage.fableWeekly.usage / config.fableWeeklyLimitSeed, 1.5);
-  }
   if (config.windowLimitSeed != null && windowUsage) {
     windowUsage.medianCeiling = config.windowLimitSeed;
     windowUsage.pctUsed = Math.min(windowUsage.currentUsage / config.windowLimitSeed, 1.5);
@@ -1182,33 +1132,6 @@ function buildMenubarData(wu, extraTotals, extraPurchasedSeed, options = {}) {
       ceilingDisplay: wu.weekly.ceiling != null ? `$${wu.weekly.ceiling.toFixed(2)}` : null,
       isRemaining: false,
     } : null;
-    // Fable 5 weekly — prefer the official % from the statusline cache; fall
-    // back to the transcript-derived estimate. Omitted entirely when there's
-    // no Fable usage and no seeded ceiling, so the menu item stays hidden.
-    const fableLimits = findFableRateLimit(rateLimits);
-    const fableResetsAt = fableLimits?.resets_at;
-    const fableFresh = typeof fableResetsAt === "number" && fableResetsAt > nowSec;
-    const fableUsedPct = fableFresh ? fableLimits?.used_percentage : undefined;
-    const fw = wu?.fableWeekly;
-    const fableMetric = typeof fableUsedPct === "number" ? {
-      usage: fableUsedPct,
-      ceiling: 100,
-      pct: +Math.min(fableUsedPct / 100, 1).toFixed(4),
-      usageDisplay: `${Math.round(fableUsedPct)}% used`,
-      ceilingDisplay: null,
-      detail: formatResetDetail(fableResetsAt),
-      endEpoch: fableResetsAt,
-      isRemaining: false,
-    } : fw && (fw.usage > 0 || fw.ceiling != null) ? {
-      usage: +(fw.usage || 0).toFixed(4),
-      ceiling: fw.ceiling != null ? +fw.ceiling.toFixed(4) : null,
-      pct: fw.pct != null ? +Math.min(fw.pct, 1).toFixed(4) : null,
-      usageDisplay: `$${(fw.usage || 0).toFixed(2)}`,
-      ceilingDisplay: fw.ceiling != null ? `$${fw.ceiling.toFixed(2)}` : null,
-      detail: formatResetDetail(fw.resetsAt ?? weeklyResetEpoch),
-      endEpoch: fw.resetsAt ?? weeklyResetEpoch,
-      isRemaining: false,
-    } : null;
     const todayDate = wu?.daily?.date || laDateStrFromEpochSeconds(nowSec);
     const weeklyCycle = todayDate
       ? buildWeeklyCycleFromReset(todayDate, weeklyResetEpoch)
@@ -1219,22 +1142,23 @@ function buildMenubarData(wu, extraTotals, extraPurchasedSeed, options = {}) {
       reportPath: path.resolve(ROOT, "report.html"),
       primaryLabel: "5h used",
       secondaryLabel: "Week used",
-      tertiaryLabel: "Fable 5 week",
       primary: windowMetric,
       secondary: weeklyMetric,
-      tertiary: fableMetric,
       window: windowMetric,
       weekly: weeklyMetric,
-      fableWeekly: fableMetric,
       weeklyCycle,
       extraSpent: typeof extraTotals?.cost === "number" ? +extraTotals.cost.toFixed(4) : null,
       extraPurchased: typeof extraPurchasedSeed === "number" ? +extraPurchasedSeed.toFixed(4) : null,
+      // Manually maintained in config.json — claude.ai has no API for this,
+      // so the balance is read off the Usage settings page by hand.
+      usageCreditsBalance: typeof options.usageCreditsBalance === "number" ? +options.usageCreditsBalance.toFixed(4) : null,
+      reconciliationUrl: options.reconciliationUrl ?? null,
     };
 }
 
-function writeMenubarJson(wu, totals, extraTotals, extraPurchasedSeed) {
+function writeMenubarJson(wu, totals, extraTotals, extraPurchasedSeed, options = {}) {
   try {
-    const out = buildMenubarData(wu, extraTotals, extraPurchasedSeed);
+    const out = buildMenubarData(wu, extraTotals, extraPurchasedSeed, options);
     fs.writeFileSync(MENUBAR_JSON_PATH, JSON.stringify(out, null, 2));
   } catch (e) {
     console.warn("[build] could not write menubar.json:", e.message);
@@ -1251,11 +1175,13 @@ function build(argv = process.argv.slice(2)) {
   const windowUsage = buildWindowUsage(coworkSessions);
   const config = readConfig();
   applyUsageConfig(config, windowUsage, tokens);
-  applyOfficialFableLimit(windowUsage, readStatuslineRateLimits());
 
   if (menubarOnly) {
     delete tokens._prompts;
-    writeMenubarJson(windowUsage, tokens.totals, tokens.extraTotals, config.extraPurchasedSeed ?? null);
+    writeMenubarJson(windowUsage, tokens.totals, tokens.extraTotals, config.extraPurchasedSeed ?? null, {
+      usageCreditsBalance: config.usageCreditsBalance ?? null,
+      reconciliationUrl: config.reconciliationUrl ?? null,
+    });
     const ms = Date.now() - t0;
     console.log(`[build] wrote ${MENUBAR_JSON_PATH} — $${tokens.totals.cost.toFixed(2)} equiv · ${tokens.totals.messages} turns · ${ms}ms`);
     return;
@@ -1328,7 +1254,10 @@ function build(argv = process.argv.slice(2)) {
   };
   const js = `// Generated by scripts/build.js — do not edit\nwindow.TRACKER_DATA = ${JSON.stringify(data)};\n`;
   writeAtomic(OUTPUT, js);
-  writeMenubarJson(windowUsage, data.tokens.totals, tokens.extraTotals, config.extraPurchasedSeed ?? null);
+  writeMenubarJson(windowUsage, data.tokens.totals, tokens.extraTotals, config.extraPurchasedSeed ?? null, {
+    usageCreditsBalance: config.usageCreditsBalance ?? null,
+    reconciliationUrl: config.reconciliationUrl ?? null,
+  });
   const ms = Date.now() - t0;
   const kb = (js.length / 1024).toFixed(1);
   console.log(`[build] wrote data.js (${kb} KB) — $${data.tokens.totals.cost.toFixed(2)} equiv · ${data.tokens.totals.messages} turns · ${ms}ms`);
@@ -1340,7 +1269,7 @@ if (typeof module !== "undefined" && module.exports && require.main !== module) 
   module.exports = {
     getPricing, calcCost, zeroCounts, addCounts, slugToPath,
     isRealPrompt, extractPromptText, enrichHistory, readJsonl, toLADate,
-    applyUsageConfig, buildMenubarData, findFableRateLimit, applyOfficialFableLimit,
+    applyUsageConfig, buildMenubarData,
   };
 } else {
   build();

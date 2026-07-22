@@ -39,6 +39,8 @@ struct MenubarData: Codable {
     let weeklyCycle: WeeklyCycleData?
     let extraSpent: Double?
     let extraPurchased: Double?
+    let usageCreditsBalance: Double?
+    let reconciliationUrl: String?
 
     struct MetricData: Codable {
         let usage: Double
@@ -321,9 +323,11 @@ final class ProviderStatusController {
     private var accuracyMenuItem: NSMenuItem?
     private var accuracyCheckMenuItem: NSMenuItem?
     private var extraCreditMenuItem: NSMenuItem?
+    private var usageCreditsMenuItem: NSMenuItem?
     private var apiCreditMenuItem: NSMenuItem?
     private var openMenuItem: NSMenuItem!
     private var lastReportPath: String?
+    private var lastReconciliationURL: URL?
     private var currentData: MenubarData?
 
     init(dataURL: URL, weeklyResetCacheURL: URL? = nil, openTitle: String, sectionTitle: String, fallbackBuildCommand: String, theme: ProviderTheme, usagePageURL: URL? = nil, apiCreditURL: URL? = nil, accuracyURL: URL? = nil, primaryDisplayLabel: String? = "5 hour", secondaryDisplayLabel: String = "weekly") {
@@ -397,6 +401,16 @@ final class ProviderStatusController {
         extraCreditMenuItem = ecItem
         menu.addItem(ecItem)
 
+        // Usage credits balance — value and click target both come from the
+        // data file (reconciliationUrl), not a fixed per-provider URL, since
+        // the balance has to be read manually off claude.ai for now.
+        let ucItem = NSMenuItem(title: "", action: #selector(AppDelegate.openReconciliationFromMenuItem(_:)), keyEquivalent: "")
+        ucItem.target = target
+        ucItem.representedObject = self
+        ucItem.isHidden = true
+        usageCreditsMenuItem = ucItem
+        menu.addItem(ucItem)
+
         if apiCreditURL != nil {
             let item = NSMenuItem(title: "API Credit", action: #selector(AppDelegate.openApiCreditFromMenuItem(_:)), keyEquivalent: "")
             item.target = target
@@ -433,6 +447,11 @@ final class ProviderStatusController {
     func openApiCredit() {
         guard let apiCreditURL else { return }
         NSWorkspace.shared.open(apiCreditURL)
+    }
+
+    func openReconciliation() {
+        guard let lastReconciliationURL else { return }
+        NSWorkspace.shared.open(lastReconciliationURL)
     }
 
     func refreshAccuracy() {
@@ -566,6 +585,15 @@ final class ProviderStatusController {
         } else {
             extraCreditMenuItem?.isHidden = true
         }
+
+        lastReconciliationURL = data.reconciliationUrl.flatMap { URL(string: $0) }
+        if let balance = data.usageCreditsBalance {
+            usageCreditsMenuItem?.title = "    Usage Credits: $\(String(format: "%.2f", balance))"
+            usageCreditsMenuItem?.isHidden = false
+            usageCreditsMenuItem?.isEnabled = lastReconciliationURL != nil
+        } else {
+            usageCreditsMenuItem?.isHidden = true
+        }
     }
 
     func hoverSummaryLines() -> [HoverMetricRow] {
@@ -606,6 +634,7 @@ final class ProviderStatusController {
         appendMenuItem(accuracyMenuItem, to: &rows, tint: theme.tint)
         appendMenuItem(accuracyCheckMenuItem, to: &rows, tint: theme.tint) { [weak target, weak self] in target?.runAccuracyCheck(for: self) }
         appendMenuItem(extraCreditMenuItem, to: &rows, tint: theme.tint)
+        appendMenuItem(usageCreditsMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openReconciliation() }
         appendMenuItem(apiCreditMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openApiCredit() }
         return rows
     }
@@ -720,9 +749,9 @@ final class ProviderStatusController {
             ].compactMap { $0 }
             let resetNote = metric.resetDetected == true ? ", usage reset detected" : ""
             if let estimate = metric.usageDisplay, estimate.localizedCaseInsensitiveContains("est") {
-                return "\(label) - \(estimate) (window resets \(resetParts.joined(separator: " "))\(resetNote))"
+                return "\(label) - \(estimate) (resets \(resetParts.joined(separator: " "))\(resetNote))"
             }
-            return "\(label) - \(usedPct)% used (\(leftPct)% left, window resets \(resetParts.joined(separator: " "))\(resetNote))"
+            return "\(label) - \(usedPct)% used (\(leftPct)% left, resets \(resetParts.joined(separator: " "))\(resetNote))"
         }
         if let detail = metric.detail, !detail.isEmpty {
             if let estimate = metric.usageDisplay, estimate.localizedCaseInsensitiveContains("est") {
@@ -962,12 +991,20 @@ final class HoverButtonLineView: NSView {
     private let handler: () -> Void
     private let label: NSTextField
 
+    // Underlined so clickable rows read as links at a glance — color alone
+    // doesn't distinguish them once a provider tint is applied to both
+    // buttons and plain text rows.
     init(title: String, tint: NSColor? = nil, action handler: @escaping () -> Void) {
         self.handler = handler
-        self.label = NSTextField(labelWithString: title)
+        let color = tint ?? .labelColor
+        self.label = NSTextField(labelWithString: "")
         super.init(frame: NSRect(x: 0, y: 0, width: 420, height: 20))
-        label.font = NSFont.systemFont(ofSize: 12)
-        label.textColor = tint ?? .controlAccentColor
+        label.attributedStringValue = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: color,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .underlineColor: color.withAlphaComponent(0.55),
+        ])
         label.lineBreakMode = .byTruncatingTail
         label.frame = NSRect(x: 0, y: 1, width: 420, height: 18)
         addSubview(label)
@@ -1193,7 +1230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        let refreshItem = NSMenuItem(title: "Refresh Now", action: #selector(refreshNow), keyEquivalent: "r")
+        let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r")
         refreshItem.target = self
         menu.addItem(refreshItem)
 
@@ -1273,7 +1310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !rows.isEmpty { rows.append(.separator) }
         rows.append(.text("Version: \(AppVersion.current)", nil))
         rows.append(.separator)
-        rows.append(.button(title: "Refresh Now", tint: nil) { [weak self] in self?.runHoverRefreshNow() })
+        rows.append(.button(title: "Refresh", tint: nil) { [weak self] in self?.runHoverRefreshNow() })
         rows.append(.button(title: "Restart", tint: nil) { [weak self] in self?.runHoverRestartApp() })
         rows.append(.text("Width", nil))
         rows.append(.separator)
@@ -1403,6 +1440,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openApiCreditFromMenuItem(_ sender: NSMenuItem) {
         guard let controller = sender.representedObject as? ProviderStatusController else { return }
         controller.openApiCredit()
+    }
+
+    @objc func openReconciliationFromMenuItem(_ sender: NSMenuItem) {
+        guard let controller = sender.representedObject as? ProviderStatusController else { return }
+        controller.openReconciliation()
     }
 
     @objc func runAccuracyCheckFromMenuItem(_ sender: NSMenuItem) {

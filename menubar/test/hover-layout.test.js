@@ -58,7 +58,7 @@ test("uses the long one-click menu content for mouseover", () => {
   assert.match(source, /let group = controller\.hoverMenuRows\(target: self\)/);
   assert.doesNotMatch(source, /let group = controller\.hoverSummaryLines\(\)/);
   assert.match(source, /rows\.append\(\.text\("Version: \\\(AppVersion\.current\)", nil\)\)/);
-  assert.match(source, /rows\.append\(\.button\(title: "Refresh Now", tint: nil\)/);
+  assert.match(source, /rows\.append\(\.button\(title: "Refresh", tint: nil\)/);
   assert.match(source, /rows\.append\(\.button\(title: "Restart", tint: nil\)/);
   assert.match(source, /rows\.append\(\.text\("Width", nil\)\)/);
   assert.match(source, /rows\.append\(\.button\(title: "Quit", tint: nil\)/);
@@ -76,6 +76,19 @@ test("shows provider colors in mouseover text", () => {
   assert.match(source, /HoverTextLineView\(text: text, tint: tint\)/);
   assert.match(source, /HoverButtonLineView\(title: title, tint: tint, action: action\)/);
   assert.match(source, /stripe\.layer\?\.backgroundColor = tint\.cgColor/);
+});
+
+test("uses default text color for untinted hover buttons", () => {
+  assert.match(source, /let color = tint \?\? \.labelColor/);
+  assert.doesNotMatch(source, /let color = tint \?\? \.controlAccentColor/);
+});
+
+test("underlines hover buttons so links are distinguishable from plain text at a glance", () => {
+  assert.match(source, /\.underlineStyle: NSUnderlineStyle\.single\.rawValue/);
+  // Plain (non-clickable) hover rows must not pick up the same treatment.
+  const textLineViewMatch = source.match(/final class HoverTextLineView: NSView \{[\s\S]*?\n\}/);
+  assert.ok(textLineViewMatch, "HoverTextLineView class not found");
+  assert.doesNotMatch(textLineViewMatch[0], /underlineStyle/);
 });
 
 test("does not attach the old single-click dropdown to the status item", () => {

@@ -126,7 +126,8 @@ Optional JSON file read by build.js on every build. Supported fields:
 - `extraSpentOverride` — override the transcript-derived `extraTotals.cost` (number, USD); useful when transcript detection undercounts actual extra credit charges
 - `weeklyLimitSeed` — override the estimated weekly ceiling (number, USD); use to calibrate against the actual % shown on claude.ai's usage page: `weeklyLimitSeed = currentWeeklyUsage / claudeAiPct`; calibration history is tracked in memory (`project_weekly_calibration.md`) — always record old seed + weeklyUsage + claude.ai % before updating, to detect oscillation
 - `windowLimitSeed` — override the median-derived per-window ceiling (number, USD); use when the median is stale (old rate-limit hits from when limits were higher): `windowLimitSeed = currentWindowUsage / claudeAiWindowPct`
-- `fableWeeklyLimitSeed` — ceiling for the separate Fable 5 weekly limit (number, USD): `fableWeeklyLimitSeed = currentFableWeeklyUsage / claudeAiFablePct`; there is no rate-limit-derived estimate for this limit, so without a seed the dashboard shows only the $ figure. The official % from Claude Code's statusline cache (any `rate_limits` key containing `fable`) is preferred over the estimate wherever it's present and fresh
+- `usageCreditsBalance` — claude.ai's "Usage credits → Current balance" figure (number, USD), read manually off Settings → Usage (no API for this); surfaced as its own menu-bar line ("Usage Credits: $X.XX") that's hidden when unset
+- `reconciliationUrl` — URL opened when the Usage Credits menu-bar line is clicked; points at a published Artifact reconciling claude.ai's real numbers against this tracker's config (see `project_fable_calibration.md` for how that page was built)
 
 ### Accuracy Inspector (`accuracy/`)
 
@@ -161,6 +162,7 @@ Codex 菜单栏的 5 小时用量必须优先显示百分比：有官方 5 小�
 - Manual purchase entry via localStorage (`claude-tracker-extraPurchased`)
 - Balance = purchased - consumed, with add/reset buttons
 - Daily extra credit charges shown as downward red bars in the Activity & Cost chart (bottom half, 40px section); scaled independently to their own max; red max label on bottom-left y-axis
+- **Fable 5 usage is always classified as extra credit** (`build.js`'s `isExtraCredit` check ORs in `FABLE_MODEL_RE.test(model)`): as of 2026-07-21, claude.ai bills all Fable 5 usage from the account's pay-as-you-go "Usage credits" balance (Settings → Usage → Usage credits) rather than counting it against a separate weekly plan quota. There is no longer a distinct "Fable 5 weekly limit" line on claude.ai, so the dashboard no longer tracks one either — the previous `fableWeekly`/`fableWeeklyLimitSeed`/tertiary-menubar-metric machinery was removed. Fable spend now just flows into the existing extraTotals/Extra Credit gauge like any other overage usage
 
 ## Commands
 
