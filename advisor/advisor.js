@@ -214,13 +214,15 @@ function runAgent(prompt) {
 // ---- notification -------------------------------------------------------------
 
 function fireNotification(title, body) {
-  const t = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const b = body.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   try {
-    execFileSync('/usr/bin/osascript', ['-e', `display notification "${b}" with title "${t}"`], { timeout: 5000 });
+    execFileSync('terminal-notifier', [
+      '-title', title,
+      '-message', body,
+      '-group', 'ai-tool-advisor',
+    ], { timeout: 5000 });
     log(`notified: "${title}" / "${body}"`);
   } catch (e) {
-    log('osascript failed:', e.message);
+    log('terminal-notifier failed:', e.message);
   }
 }
 
