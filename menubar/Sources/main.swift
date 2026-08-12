@@ -40,6 +40,7 @@ struct MenubarData: Codable {
     let extraSpent: Double?
     let extraPurchased: Double?
     let usageCreditsBalance: Double?
+    let usageCreditsUrl: String?
     let reconciliationUrl: String?
 
     struct MetricData: Codable {
@@ -327,7 +328,7 @@ final class ProviderStatusController {
     private var apiCreditMenuItem: NSMenuItem?
     private var openMenuItem: NSMenuItem!
     private var lastReportPath: String?
-    private var lastReconciliationURL: URL?
+    private var lastUsageCreditsURL: URL?
     private var currentData: MenubarData?
 
     init(dataURL: URL, weeklyResetCacheURL: URL? = nil, openTitle: String, sectionTitle: String, fallbackBuildCommand: String, theme: ProviderTheme, usagePageURL: URL? = nil, apiCreditURL: URL? = nil, accuracyURL: URL? = nil, primaryDisplayLabel: String? = "5 hour", secondaryDisplayLabel: String = "weekly") {
@@ -401,10 +402,7 @@ final class ProviderStatusController {
         extraCreditMenuItem = ecItem
         menu.addItem(ecItem)
 
-        // Usage credits balance — value and click target both come from the
-        // data file (reconciliationUrl), not a fixed per-provider URL, since
-        // the balance has to be read manually off claude.ai for now.
-        let ucItem = NSMenuItem(title: "", action: #selector(AppDelegate.openReconciliationFromMenuItem(_:)), keyEquivalent: "")
+        let ucItem = NSMenuItem(title: "", action: #selector(AppDelegate.openUsageCreditsFromMenuItem(_:)), keyEquivalent: "")
         ucItem.target = target
         ucItem.representedObject = self
         ucItem.isHidden = true
@@ -449,9 +447,9 @@ final class ProviderStatusController {
         NSWorkspace.shared.open(apiCreditURL)
     }
 
-    func openReconciliation() {
-        guard let lastReconciliationURL else { return }
-        NSWorkspace.shared.open(lastReconciliationURL)
+    func openUsageCredits() {
+        guard let lastUsageCreditsURL else { return }
+        NSWorkspace.shared.open(lastUsageCreditsURL)
     }
 
     func refreshAccuracy() {
@@ -586,11 +584,15 @@ final class ProviderStatusController {
             extraCreditMenuItem?.isHidden = true
         }
 
-        lastReconciliationURL = data.reconciliationUrl.flatMap { URL(string: $0) }
-        if let balance = data.usageCreditsBalance {
-            usageCreditsMenuItem?.title = "    Usage Credits: $\(String(format: "%.2f", balance))"
+        lastUsageCreditsURL = (data.usageCreditsUrl ?? data.reconciliationUrl).flatMap { URL(string: $0) }
+        if lastUsageCreditsURL != nil {
+            usageCreditsMenuItem?.title = "    Usage Credits"
             usageCreditsMenuItem?.isHidden = false
-            usageCreditsMenuItem?.isEnabled = lastReconciliationURL != nil
+            usageCreditsMenuItem?.isEnabled = true
+        } else if let balance = data.usageCreditsBalance {
+            usageCreditsMenuItem?.title = "    Usage Credits (manual): $\(String(format: "%.2f", balance))"
+            usageCreditsMenuItem?.isHidden = false
+            usageCreditsMenuItem?.isEnabled = false
         } else {
             usageCreditsMenuItem?.isHidden = true
         }
@@ -634,7 +636,7 @@ final class ProviderStatusController {
         appendMenuItem(accuracyMenuItem, to: &rows, tint: theme.tint)
         appendMenuItem(accuracyCheckMenuItem, to: &rows, tint: theme.tint) { [weak target, weak self] in target?.runAccuracyCheck(for: self) }
         appendMenuItem(extraCreditMenuItem, to: &rows, tint: theme.tint)
-        appendMenuItem(usageCreditsMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openReconciliation() }
+        appendMenuItem(usageCreditsMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openUsageCredits() }
         appendMenuItem(apiCreditMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openApiCredit() }
         return rows
     }
@@ -1442,9 +1444,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.openApiCredit()
     }
 
-    @objc func openReconciliationFromMenuItem(_ sender: NSMenuItem) {
+    @objc func openUsageCreditsFromMenuItem(_ sender: NSMenuItem) {
         guard let controller = sender.representedObject as? ProviderStatusController else { return }
-        controller.openReconciliation()
+        controller.openUsageCredits()
     }
 
     @objc func runAccuracyCheckFromMenuItem(_ sender: NSMenuItem) {

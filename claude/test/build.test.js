@@ -378,20 +378,29 @@ test("keeps reset times when 5h and weekly windows have usage", () => {
   assert.strictEqual(data.extraPurchased, 20);
 });
 
-test("passes through usageCreditsBalance and reconciliationUrl when set", () => {
+test("passes through usageCreditsBalance and usageCreditsUrl when set", () => {
+  const data = buildMenubarData(null, { cost: 0 }, null, {
+    nowSec: 1_000_000,
+    usageCreditsBalance: 101.7234,
+    usageCreditsUrl: "https://claude.ai/settings/usage",
+  });
+  assert.strictEqual(data.usageCreditsBalance, 101.7234);
+  assert.strictEqual(data.usageCreditsUrl, "https://claude.ai/settings/usage");
+});
+
+test("falls back to reconciliationUrl for existing configs", () => {
   const data = buildMenubarData(null, { cost: 0 }, null, {
     nowSec: 1_000_000,
     usageCreditsBalance: 101.7234,
     reconciliationUrl: "https://claude.ai/code/artifact/example",
   });
-  assert.strictEqual(data.usageCreditsBalance, 101.7234);
-  assert.strictEqual(data.reconciliationUrl, "https://claude.ai/code/artifact/example");
+  assert.strictEqual(data.usageCreditsUrl, "https://claude.ai/code/artifact/example");
 });
 
-test("omits usageCreditsBalance and reconciliationUrl when unset", () => {
+test("omits usageCreditsBalance and usageCreditsUrl when unset", () => {
   const data = buildMenubarData(null, { cost: 0 }, null, { nowSec: 1_000_000 });
   assert.strictEqual(data.usageCreditsBalance, null);
-  assert.strictEqual(data.reconciliationUrl, null);
+  assert.strictEqual(data.usageCreditsUrl, null);
 });
 
 // ---- Summary ----

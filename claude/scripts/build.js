@@ -1152,7 +1152,7 @@ function buildMenubarData(wu, extraTotals, extraPurchasedSeed, options = {}) {
       // Manually maintained in config.json — claude.ai has no API for this,
       // so the balance is read off the Usage settings page by hand.
       usageCreditsBalance: typeof options.usageCreditsBalance === "number" ? +options.usageCreditsBalance.toFixed(4) : null,
-      reconciliationUrl: options.reconciliationUrl ?? null,
+      usageCreditsUrl: options.usageCreditsUrl ?? options.reconciliationUrl ?? null,
     };
 }
 
@@ -1180,7 +1180,7 @@ function build(argv = process.argv.slice(2)) {
     delete tokens._prompts;
     writeMenubarJson(windowUsage, tokens.totals, tokens.extraTotals, config.extraPurchasedSeed ?? null, {
       usageCreditsBalance: config.usageCreditsBalance ?? null,
-      reconciliationUrl: config.reconciliationUrl ?? null,
+      usageCreditsUrl: config.usageCreditsUrl ?? config.reconciliationUrl ?? null,
     });
     const ms = Date.now() - t0;
     console.log(`[build] wrote ${MENUBAR_JSON_PATH} — $${tokens.totals.cost.toFixed(2)} equiv · ${tokens.totals.messages} turns · ${ms}ms`);
@@ -1256,7 +1256,7 @@ function build(argv = process.argv.slice(2)) {
   writeAtomic(OUTPUT, js);
   writeMenubarJson(windowUsage, data.tokens.totals, tokens.extraTotals, config.extraPurchasedSeed ?? null, {
     usageCreditsBalance: config.usageCreditsBalance ?? null,
-    reconciliationUrl: config.reconciliationUrl ?? null,
+    usageCreditsUrl: config.usageCreditsUrl ?? config.reconciliationUrl ?? null,
   });
   const ms = Date.now() - t0;
   const kb = (js.length / 1024).toFixed(1);
