@@ -60,8 +60,21 @@ test("uses the long one-click menu content for mouseover", () => {
   assert.match(source, /rows\.append\(\.text\("Version: \\\(AppVersion\.current\)", nil\)\)/);
   assert.match(source, /rows\.append\(\.button\(title: "Refresh", tint: nil\)/);
   assert.match(source, /rows\.append\(\.button\(title: "Restart", tint: nil\)/);
-  assert.match(source, /rows\.append\(\.text\("Width", nil\)\)/);
+  assert.match(source, /rows\.append\(\.slider\(label: "Width", value: Double\(barItemWidth\), minValue: 10, maxValue: 120\)/);
   assert.match(source, /rows\.append\(\.button\(title: "Quit", tint: nil\)/);
+});
+
+test("renders the bar-width control as a real slider, not a placeholder label", () => {
+  // Regression test: the 2026-07-15 hover-panel migration (8c3d8e7) swapped the
+  // click-menu's NSSlider for a dead `.text("Width", nil)` row that had no control
+  // attached, silently dropping the width adjuster from the mouseover panel.
+  assert.doesNotMatch(source, /rows\.append\(\.text\("Width", nil\)\)/);
+  assert.match(source, /case slider\(label: String, value: Double, minValue: Double, maxValue: Double, onChange: \(CGFloat\) -> Void\)/);
+  assert.match(source, /case \.slider\(let label, let value, let minValue, let maxValue, let onChange\):/);
+  assert.match(source, /HoverSliderLineView\(label: label, value: value, minValue: minValue, maxValue: maxValue, onChange: onChange\)/);
+  assert.match(source, /final class HoverSliderLineView: NSView/);
+  assert.match(source, /let slider = NSSlider\(value: value, minValue: minValue, maxValue: maxValue, target: self, action: #selector\(sliderChanged\(_:\)\)\)/);
+  assert.match(source, /private func applyBarWidth\(_ newWidth: CGFloat\)/);
 });
 
 test("shows provider colors in mouseover text", () => {

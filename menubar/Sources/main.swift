@@ -900,6 +900,7 @@ enum HoverRow {
     case text(String, NSColor?)
     case button(title: String, tint: NSColor?, action: () -> Void)
     case metric(HoverMetricRow)
+    case slider(label: String, value: Double, minValue: Double, maxValue: Double, onChange: (CGFloat) -> Void)
     case separator
 }
 
@@ -989,6 +990,46 @@ final class HoverTextLineView: NSView {
     }
 }
 
+final class HoverSliderLineView: NSView {
+    private let valueLabel: NSTextField
+    private let onChange: (CGFloat) -> Void
+
+    init(label: String, value: Double, minValue: Double, maxValue: Double, onChange: @escaping (CGFloat) -> Void) {
+        self.onChange = onChange
+        self.valueLabel = NSTextField(labelWithString: "\(Int(value))px")
+        super.init(frame: NSRect(x: 0, y: 0, width: 420, height: 20))
+
+        let nameLabel = NSTextField(labelWithString: label)
+        nameLabel.font = NSFont.systemFont(ofSize: 12)
+        nameLabel.textColor = .secondaryLabelColor
+        nameLabel.frame = NSRect(x: 0, y: 2, width: 40, height: 16)
+        addSubview(nameLabel)
+
+        let slider = NSSlider(value: value, minValue: minValue, maxValue: maxValue, target: self, action: #selector(sliderChanged(_:)))
+        slider.isContinuous = true
+        slider.frame = NSRect(x: 46, y: 2, width: 322, height: 16)
+        addSubview(slider)
+
+        valueLabel.font = NSFont.systemFont(ofSize: 12)
+        valueLabel.frame = NSRect(x: 374, y: 2, width: 46, height: 16)
+        addSubview(valueLabel)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 420, height: 20)
+    }
+
+    @objc private func sliderChanged(_ sender: NSSlider) {
+        let newValue = CGFloat(sender.doubleValue.rounded())
+        valueLabel.stringValue = "\(Int(newValue))px"
+        onChange(newValue)
+    }
+}
+
 final class HoverButtonLineView: NSView {
     private let handler: () -> Void
     private let label: NSTextField
@@ -1074,6 +1115,8 @@ final class UsageHoverViewController: NSViewController {
                 stack.addArrangedSubview(HoverButtonLineView(title: title, tint: tint, action: action))
             case .metric(let row):
                 stack.addArrangedSubview(HoverMetricLineView(row: row))
+            case .slider(let label, let value, let minValue, let maxValue, let onChange):
+                stack.addArrangedSubview(HoverSliderLineView(label: label, value: value, minValue: minValue, maxValue: maxValue, onChange: onChange))
             case .separator:
                 stack.addArrangedSubview(HoverSeparatorView(frame: NSRect(x: 0, y: 0, width: 420, height: 1)))
             }
@@ -1106,7 +1149,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let buildQueue = DispatchQueue(label: "agentic-tool-usage-tracker.menubar-build")
     private var claudeBuildInFlight = false
     private var codexBuildInFlight = false
-    private var antigravityBuildInFlight = false
 
     private var barItemWidth: CGFloat {
         get {
@@ -1127,11 +1169,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .appendingPathComponent(".claude/statusline-rate-limits.json")
     private static let codexDataURL = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".codex/codex-tracker-menubar.json")
-    private static let antigravityDataURL = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent(".gemini/antigravity-cli/antigravity-tracker-menubar.json")
     private static let claudeBuildScriptURL = repoRootURL.appendingPathComponent("claude/scripts/build.js")
     private static let codexBuildScriptURL = repoRootURL.appendingPathComponent("codex/scripts/build.js")
-    private static let antigravityBuildScriptURL = repoRootURL.appendingPathComponent("antigravity/scripts/build.js")
     private static let claudeAccuracyURL = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".claude/claude-accuracy.json")
     private static let codexAccuracyURL = URL(fileURLWithPath: NSHomeDirectory())
@@ -1176,18 +1215,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 usagePageURL: URL(string: "https://chatgpt.com/codex/settings/usage"),
                 apiCreditURL: URL(string: "https://platform.openai.com/home"),
                 accuracyURL: Self.codexAccuracyURL
-            ),
-            ProviderStatusController(
-                dataURL: Self.antigravityDataURL,
-                openTitle: "Open Antigravity Dashboard",
-                sectionTitle: "Antigravity",
-                fallbackBuildCommand: "npm run build:antigravity",
-                theme: ProviderTheme(
-                    tint: NSColor.systemTeal.withAlphaComponent(0.76)
-                ),
-                usagePageURL: URL(string: "https://antigravity.google/"),
-                primaryDisplayLabel: nil,
-                secondaryDisplayLabel: "weekly"
             )
         ]
 
@@ -1274,10 +1301,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func widthSliderChanged(_ sender: NSSlider) {
         let newWidth = CGFloat(sender.doubleValue.rounded())
-        barItemWidth = newWidth
         if let valueLabel = sender.superview?.viewWithTag(1001) as? NSTextField {
             valueLabel.stringValue = "\(Int(newWidth))px"
         }
+        applyBarWidth(newWidth)
+    }
+
+    private func applyBarWidth(_ newWidth: CGFloat) {
+        barItemWidth = newWidth
         statusItem.length = newWidth + 4
         barView.frame = NSRect(x: 2, y: 0, width: newWidth, height: barView.frame.height)
         barView.needsDisplay = true
@@ -1287,7 +1318,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshFromDataFiles()
         refreshClaudeMenubarData()
         refreshCodexMenubarData()
-        refreshAntigravityMenubarData()
     }
 
     private func refreshFromDataFiles() {
@@ -1314,7 +1344,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rows.append(.separator)
         rows.append(.button(title: "Refresh", tint: nil) { [weak self] in self?.runHoverRefreshNow() })
         rows.append(.button(title: "Restart", tint: nil) { [weak self] in self?.runHoverRestartApp() })
-        rows.append(.text("Width", nil))
+        rows.append(.slider(label: "Width", value: Double(barItemWidth), minValue: 10, maxValue: 120) { [weak self] newWidth in
+            self?.applyBarWidth(newWidth)
+        })
         rows.append(.separator)
         rows.append(.button(title: "Quit", tint: nil) { NSApp.terminate(nil) })
         guard !rows.isEmpty else { return }
@@ -1369,19 +1401,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.runMenubarBuild(scriptURL: Self.codexBuildScriptURL)
             DispatchQueue.main.async { [weak self] in
                 self?.codexBuildInFlight = false
-                self?.refreshFromDataFiles()
-            }
-        }
-    }
-
-    private func refreshAntigravityMenubarData() {
-        guard !antigravityBuildInFlight else { return }
-        guard FileManager.default.fileExists(atPath: Self.antigravityBuildScriptURL.path) else { return }
-        antigravityBuildInFlight = true
-        buildQueue.async { [weak self] in
-            self?.runMenubarBuild(scriptURL: Self.antigravityBuildScriptURL)
-            DispatchQueue.main.async { [weak self] in
-                self?.antigravityBuildInFlight = false
                 self?.refreshFromDataFiles()
             }
         }
