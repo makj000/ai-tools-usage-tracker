@@ -22,6 +22,8 @@ const RATE_LIMIT_CLOCK_SKEW_SEC = 5 * 60;
 const OFFICIAL_USAGE_MAX_AGE_SEC = 2 * 3600;
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), ".codex", "sessions");
 const MENUBAR_ONLY_FLAG = "--menubar-only";
+const EXPENSIVE_MODEL_RE = /\b(opus|allpost)\b/i;
+const MODEL_ALERT_RECENT_SEC = 2 * 3600;
 
 function readJsonl(filePath) {
   if (!fs.existsSync(filePath)) return [];
@@ -175,7 +177,7 @@ function readPreviousOfficialCodexUsage(currentTextFile, currentCapturedAt) {
     .filter((entry) => entry.capturedAt && Date.parse(entry.capturedAt) < currentMs)
     .sort((a, b) => Date.parse(b.capturedAt) - Date.parse(a.capturedAt))
     .map((entry) => readOfficialUsageTextFile(entry.fileName))
-    .find((usage) => usage?.fiveHour) || null;
+    .find((usage) => usage?.fiveHour || usage?.weekly) || null;
 }
 
 function detectOfficialFiveHourReset(currentUsage, previousUsage) {
@@ -194,6 +196,24 @@ function detectOfficialFiveHourReset(currentUsage, previousUsage) {
     Number.isInteger(previous.resetEpoch) &&
     current.resetEpoch > previous.resetEpoch + RATE_LIMIT_CLOCK_SKEW_SEC;
   return usageDropped || (resetAdvanced && currentUsed <= 10);
+}
+
+function detectOfficialWeeklyReset(currentUsage, previousUsage) {
+  const current = currentUsage?.weekly;
+  const previous = previousUsage?.weekly;
+  if (!current || !previous) return false;
+  const currentUsed = usedPctFromOfficial(current);
+  const previousUsed = usedPctFromOfficial(previous);
+  if (currentUsed == null || previousUsed == null) return false;
+  const currentCaptured = Date.parse(currentUsage.capturedAt || "");
+  const previousCaptured = Date.parse(previousUsage.capturedAt || "");
+  if (!Number.isFinite(currentCaptured) || !Number.isFinite(previousCaptured) || currentCaptured <= previousCaptured) return false;
+  const usageDropped = previousUsed >= 10 && currentUsed <= Math.max(5, previousUsed - 10);
+  const resetAdvancedBeforeScheduledReset = Number.isInteger(current.resetEpoch) &&
+    Number.isInteger(previous.resetEpoch) &&
+    current.resetEpoch > previous.resetEpoch + RATE_LIMIT_CLOCK_SKEW_SEC &&
+    currentCaptured < previous.resetEpoch * 1000;
+  return usageDropped || resetAdvancedBeforeScheduledReset;
 }
 
 function readOfficialCodexUsage(options = {}) {
@@ -224,6 +244,7 @@ function readOfficialCodexUsage(options = {}) {
     ? readPreviousOfficialCodexUsage(codex.textFile, codex.capturedAt)
     : options.previousOfficialUsage;
   usage.fiveHourResetDetected = detectOfficialFiveHourReset(usage, previousUsage);
+  usage.weeklyResetDetected = detectOfficialWeeklyReset(usage, previousUsage);
   return usage;
 }
 
@@ -404,6 +425,25 @@ function buildModelSummary(threads) {
     models.set(thread.model, bucket);
   }
   return Array.from(models.values()).sort((a, b) => b.tokens - a.tokens);
+}
+
+function buildModelAlert(threads, options = {}) {
+  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
+  const recentSec = options.modelAlertRecentSec ?? MODEL_ALERT_RECENT_SEC;
+  const expensive = (threads || [])
+    .filter((thread) => EXPENSIVE_MODEL_RE.test(thread.model || ""))
+    .sort((a, b) => (b.updatedAtEpochMs || 0) - (a.updatedAtEpochMs || 0));
+  const latest = expensive[0];
+  if (!latest) return null;
+  const ageSec = Math.max(0, nowSec - Math.floor((latest.updatedAtEpochMs || 0) / 1000));
+  if (ageSec > recentSec) return null;
+  return {
+    active: true,
+    model: latest.model,
+    project: latest.shortProject || latest.projectLabel || latest.cwd || "unknown",
+    updatedAt: latest.updatedAt || null,
+    detail: `Codex expensive model: ${latest.model} in ${latest.shortProject || latest.projectLabel || "unknown"}`,
+  };
 }
 
 function buildOverview(threads, history, projects) {
@@ -735,6 +775,10 @@ function buildMenubarData(daily, options = {}) {
   const hasOfficialFiveHourUsage = typeof officialFiveHourPct === "number";
   const hasOfficialWeeklyUsage = typeof officialWeeklyPct === "number";
   const officialFiveHourResetDetected = hasOfficialFiveHourUsage && officialUsage?.fiveHourResetDetected === true;
+  const officialWeeklyResetDetected = hasOfficialWeeklyUsage && officialUsage?.weeklyResetDetected === true;
+  const officialResetFloorSec = !hasOfficialFiveHourUsage && officialWeeklyResetDetected && officialUsage?.capturedAt
+    ? Math.floor(Date.parse(officialUsage.capturedAt) / 1000)
+    : null;
   const hasPrimaryRateLimit = !hasOfficialFiveHourUsage && typeof primaryUsedPercent === "number" && primaryResetFresh;
   const hasSecondaryRateLimit = !hasOfficialWeeklyUsage && typeof secondaryUsedPercent === "number" && secondaryResetFresh;
   const hasOfficialRateLimit = rateLimits?.primary || rateLimits?.secondary;
@@ -782,7 +826,10 @@ function buildMenubarData(daily, options = {}) {
   }
 
   const hasLocalPrimaryUsage = displayDayUsage > 0 || displayDayPrompts > 0;
-  const localFiveHour = buildLocalFiveHourEstimate(options.threads, nowSec, projectedWindowStart, projectedWindowEnd);
+  const effectiveWindowStart = Number.isInteger(officialResetFloorSec) && projectedWindowStart !== null
+    ? Math.max(projectedWindowStart, officialResetFloorSec)
+    : projectedWindowStart;
+  const localFiveHour = buildLocalFiveHourEstimate(options.threads, nowSec, effectiveWindowStart, projectedWindowEnd);
   const hasProjectedFiveHourWindow = projectedWindowEnd !== null;
   const localFallbackPct = localFiveHour?.pct ?? (hasProjectedFiveHourWindow ? 0 : null);
   const localFallbackUsage = localFiveHour?.usage ?? (hasProjectedFiveHourWindow ? 0 : displayDayUsage);
@@ -804,7 +851,7 @@ function buildMenubarData(daily, options = {}) {
         ? `${Math.round(localFallbackPct * 100)}% est.`
         : `${compactNumber(displayDayUsage)} tok`,
     ceilingDisplay: hasOfficialFiveHourUsage || hasPrimaryRateLimit || localFallbackCeiling == null ? null : `${compactNumber(localFallbackCeiling)} tok est.`,
-    detail: officialFiveHourResetDetected
+    detail: officialFiveHourResetDetected || officialWeeklyResetDetected
       ? "usage reset detected"
       : hasOfficialFiveHourUsage && Number.isInteger(officialUsage.fiveHour.resetEpoch)
       ? formatResetDetail(officialUsage.fiveHour.resetEpoch)
@@ -817,10 +864,10 @@ function buildMenubarData(daily, options = {}) {
           : localFallbackPct != null
             ? "estimated from local 5h activity"
             : `${displayDayPrompts} prompts`,
-    startEpoch: projectedWindowStart,
+    startEpoch: effectiveWindowStart,
     endEpoch: projectedWindowEnd,
     isRemaining: hasOfficialFiveHourUsage ? officialUsage.fiveHour.isRemaining : false,
-    resetDetected: officialFiveHourResetDetected,
+    resetDetected: officialFiveHourResetDetected || officialWeeklyResetDetected,
   } : null;
 
   return {
@@ -851,6 +898,7 @@ function buildMenubarData(daily, options = {}) {
       isRemaining: hasOfficialWeeklyUsage ? officialUsage.weekly.isRemaining : false,
     },
     weeklyCycle: buildWeeklyCycle(todayDate, Number.isInteger(officialUsage?.weekly?.resetEpoch) ? officialUsage.weekly.resetEpoch : rateLimits?.secondary?.resets_at),
+    modelAlert: buildModelAlert(options.threads || [], { nowSec, modelAlertRecentSec: options.modelAlertRecentSec }),
   };
 }
 
@@ -915,11 +963,13 @@ if (require.main === module) {
 module.exports = {
   buildDailyActivity,
   buildMenubarData,
+  buildModelAlert,
   buildModelSummary,
   buildOverview,
   buildProjects,
   buildThreads,
   detectOfficialFiveHourReset,
+  detectOfficialWeeklyReset,
   formatProjectLabel,
   groupPromptsBySession,
   laDate,

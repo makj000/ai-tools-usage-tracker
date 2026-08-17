@@ -44,6 +44,8 @@ const MODEL_PRICING = {
 // than counting against a plan quota, so it's always classified as extra
 // credit (see isExtraCredit in readAllTranscripts).
 const FABLE_MODEL_RE = /fable/i;
+const EXPENSIVE_MODEL_RE = /\b(opus|allpost|fable)\b/i;
+const MODEL_ALERT_RECENT_SEC = 2 * 3600;
 
 function getPricing(model) {
   if (!model) return MODEL_PRICING.default;
@@ -1153,7 +1155,30 @@ function buildMenubarData(wu, extraTotals, extraPurchasedSeed, options = {}) {
       // so the balance is read off the Usage settings page by hand.
       usageCreditsBalance: typeof options.usageCreditsBalance === "number" ? +options.usageCreditsBalance.toFixed(4) : null,
       usageCreditsUrl: options.usageCreditsUrl ?? options.reconciliationUrl ?? null,
+      modelAlert: buildModelAlert(options.sessions || [], { nowSec, modelAlertRecentSec: options.modelAlertRecentSec }),
     };
+}
+
+function buildModelAlert(sessions, options = {}) {
+  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
+  const recentSec = options.modelAlertRecentSec ?? MODEL_ALERT_RECENT_SEC;
+  const expensive = (sessions || [])
+    .filter((session) => EXPENSIVE_MODEL_RE.test(session.model || ""))
+    .sort((a, b) => Date.parse(b.lastTs || b.updatedAt || "") - Date.parse(a.lastTs || a.updatedAt || ""));
+  const latest = expensive[0];
+  if (!latest) return null;
+  const lastMs = Date.parse(latest.lastTs || latest.updatedAt || "");
+  if (!Number.isFinite(lastMs)) return null;
+  const ageSec = Math.max(0, nowSec - Math.floor(lastMs / 1000));
+  if (ageSec > recentSec) return null;
+  const project = latest.project || latest.taskName || "unknown";
+  return {
+    active: true,
+    model: latest.model,
+    project,
+    updatedAt: new Date(lastMs).toISOString(),
+    detail: `Claude expensive model: ${latest.model} in ${project}`,
+  };
 }
 
 function writeMenubarJson(wu, totals, extraTotals, extraPurchasedSeed, options = {}) {
@@ -1181,6 +1206,7 @@ function build(argv = process.argv.slice(2)) {
     writeMenubarJson(windowUsage, tokens.totals, tokens.extraTotals, config.extraPurchasedSeed ?? null, {
       usageCreditsBalance: config.usageCreditsBalance ?? null,
       usageCreditsUrl: config.usageCreditsUrl ?? config.reconciliationUrl ?? null,
+      sessions: [...Object.values(tokens.sessions || {}), ...coworkSessions],
     });
     const ms = Date.now() - t0;
     console.log(`[build] wrote ${MENUBAR_JSON_PATH} — $${tokens.totals.cost.toFixed(2)} equiv · ${tokens.totals.messages} turns · ${ms}ms`);
@@ -1257,6 +1283,7 @@ function build(argv = process.argv.slice(2)) {
   writeMenubarJson(windowUsage, data.tokens.totals, tokens.extraTotals, config.extraPurchasedSeed ?? null, {
     usageCreditsBalance: config.usageCreditsBalance ?? null,
     usageCreditsUrl: config.usageCreditsUrl ?? config.reconciliationUrl ?? null,
+    sessions: tokens.sessions,
   });
   const ms = Date.now() - t0;
   const kb = (js.length / 1024).toFixed(1);
@@ -1270,6 +1297,7 @@ if (typeof module !== "undefined" && module.exports && require.main !== module) 
     getPricing, calcCost, zeroCounts, addCounts, slugToPath,
     isRealPrompt, extractPromptText, enrichHistory, readJsonl, toLADate,
     applyUsageConfig, buildMenubarData,
+    buildModelAlert,
   };
 } else {
   build();

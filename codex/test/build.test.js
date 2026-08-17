@@ -6,10 +6,12 @@ const path = require("path");
 const {
   buildDailyActivity,
   buildMenubarData,
+  buildModelAlert,
   buildProjects,
   buildOverview,
   formatProjectLabel,
   detectOfficialFiveHourReset,
+  detectOfficialWeeklyReset,
   groupPromptsBySession,
   readChatGPTDesktopActivity,
   shortProjectName,
@@ -109,6 +111,38 @@ test("computes daily counts and overview totals", () => {
   assert.strictEqual(overview.projectCount, 2);
   assert.strictEqual(overview.promptCount, 2);
   assert.strictEqual(overview.totalTokens, 400);
+});
+
+console.log("\nbuildModelAlert");
+
+test("alerts for recent Codex Opus or Allpost threads", () => {
+  const nowSec = Math.floor(Date.parse("2026-08-17T18:00:00.000Z") / 1000);
+  const alert = buildModelAlert([
+    {
+      model: "gpt-5-codex-allpost",
+      shortProject: "ai/tracker",
+      updatedAt: "2026-08-17T17:50:00.000Z",
+      updatedAtEpochMs: Date.parse("2026-08-17T17:50:00.000Z"),
+    },
+  ], { nowSec });
+
+  assert.strictEqual(alert.active, true);
+  assert.strictEqual(alert.model, "gpt-5-codex-allpost");
+  assert.strictEqual(alert.project, "ai/tracker");
+});
+
+test("ignores stale expensive Codex threads", () => {
+  const nowSec = Math.floor(Date.parse("2026-08-17T18:00:00.000Z") / 1000);
+  const alert = buildModelAlert([
+    {
+      model: "gpt-5-codex-opus",
+      shortProject: "ai/tracker",
+      updatedAt: "2026-08-17T12:00:00.000Z",
+      updatedAtEpochMs: Date.parse("2026-08-17T12:00:00.000Z"),
+    },
+  ], { nowSec });
+
+  assert.strictEqual(alert, null);
 });
 
 console.log("\nreadChatGPTDesktopActivity");
@@ -492,6 +526,46 @@ test("detects official 5h reset from consecutive usage snapshots", () => {
   };
 
   assert.strictEqual(detectOfficialFiveHourReset(current, previous), true);
+});
+
+test("detects official weekly reset before the old scheduled reset", () => {
+  const previousReset = Math.floor(Date.parse("2026-07-21T20:37:00.000Z") / 1000);
+  const currentReset = Math.floor(Date.parse("2026-07-24T17:24:00.000Z") / 1000);
+  const previous = {
+    capturedAt: "2026-07-15T01:30:42.107Z",
+    weekly: { pct: 64, isRemaining: true, resetEpoch: previousReset },
+  };
+  const current = {
+    capturedAt: "2026-07-17T19:12:36.637Z",
+    weekly: { pct: 77, isRemaining: true, resetEpoch: currentReset },
+  };
+
+  assert.strictEqual(detectOfficialWeeklyReset(current, previous), true);
+});
+
+test("uses official weekly reset as the local 5h estimate floor when official 5h is absent", () => {
+  const nowSec = Math.floor(Date.parse("2026-07-17T19:12:36.637Z") / 1000);
+  const fiveHourReset = nowSec + 30 * 60;
+  const weeklyReset = nowSec + 7 * 24 * 60 * 60;
+  const data = buildMenubarData([
+    { date: "2026-07-17", threads: 1, prompts: 4, tokens: 5000000 },
+  ], {
+    nowSec,
+    threads: [],
+    fiveHourResetAnchor: fiveHourReset,
+    officialUsage: {
+      weekly: { pct: 77, isRemaining: true, resetEpoch: weeklyReset },
+      capturedAt: "2026-07-17T19:12:36.637Z",
+      weeklyResetDetected: true,
+    },
+    rateLimits: null,
+  });
+
+  assert.strictEqual(data.primaryLabel, "5h used");
+  assert.strictEqual(data.primary.usageDisplay, "0% est.");
+  assert.strictEqual(data.primary.detail, "usage reset detected");
+  assert.strictEqual(data.primary.resetDetected, true);
+  assert.strictEqual(data.primary.startEpoch, nowSec);
 });
 
 test("caps estimated 5h percent below 100 when calibration is exceeded", () => {

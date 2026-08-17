@@ -42,6 +42,7 @@ struct MenubarData: Codable {
     let usageCreditsBalance: Double?
     let usageCreditsUrl: String?
     let reconciliationUrl: String?
+    let modelAlert: ModelAlertData?
 
     struct MetricData: Codable {
         let usage: Double
@@ -60,6 +61,14 @@ struct MenubarData: Codable {
         let totalDots: Int
         let activeDots: Int
         let resetEpoch: Double?
+    }
+
+    struct ModelAlertData: Codable {
+        let active: Bool?
+        let model: String?
+        let project: String?
+        let updatedAt: String?
+        let detail: String?
     }
 
     var resolvedPrimaryLabel: String { primaryLabel ?? "Window" }
@@ -151,9 +160,11 @@ final class CombinedBarView: NSView {
         let theme: ProviderTheme
         let topAlertLevel: AlertLevel
         let bottomAlertLevel: AlertLevel
+        let modelAlertActive: Bool
     }
 
     var providers: [ProviderBars] = []
+    var alertFlashOn: Bool = true
     var onMouseEntered: (() -> Void)?
     var onMouseExited: (() -> Void)?
     private var trackingAreaRef: NSTrackingArea?
@@ -192,6 +203,10 @@ final class CombinedBarView: NSView {
         let bgRect = NSRect(x: x, y: 1, width: width, height: bounds.height - 2)
         provider.theme.tint.setFill()
         NSBezierPath(roundedRect: bgRect, xRadius: 4, yRadius: 4).fill()
+        if provider.modelAlertActive && alertFlashOn {
+            NSColor.systemRed.withAlphaComponent(0.88).setFill()
+            NSBezierPath(roundedRect: bgRect, xRadius: 4, yRadius: 4).fill()
+        }
 
         let inset: CGFloat = 2
         let barH: CGFloat = 3
@@ -248,6 +263,13 @@ final class CombinedBarView: NSView {
                 provider: provider,
                 dotSize: dotSize
             )
+        }
+
+        if provider.modelAlertActive && alertFlashOn {
+            NSColor.white.withAlphaComponent(0.96).setStroke()
+            let border = NSBezierPath(roundedRect: bgRect.insetBy(dx: 0.75, dy: 0.75), xRadius: 4, yRadius: 4)
+            border.lineWidth = 1.5
+            border.stroke()
         }
     }
 
@@ -325,6 +347,7 @@ final class ProviderStatusController {
     private var accuracyCheckMenuItem: NSMenuItem?
     private var extraCreditMenuItem: NSMenuItem?
     private var usageCreditsMenuItem: NSMenuItem?
+    private var modelAlertMenuItem: NSMenuItem?
     private var apiCreditMenuItem: NSMenuItem?
     private var openMenuItem: NSMenuItem!
     private var lastReportPath: String?
@@ -408,6 +431,12 @@ final class ProviderStatusController {
         ucItem.isHidden = true
         usageCreditsMenuItem = ucItem
         menu.addItem(ucItem)
+
+        let maItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        maItem.isEnabled = false
+        maItem.isHidden = true
+        modelAlertMenuItem = maItem
+        menu.addItem(maItem)
 
         if apiCreditURL != nil {
             let item = NSMenuItem(title: "API Credit", action: #selector(AppDelegate.openApiCreditFromMenuItem(_:)), keyEquivalent: "")
@@ -509,7 +538,8 @@ final class ProviderStatusController {
             cycleTotalDots: cycleTotalDots,
             theme: theme,
             topAlertLevel: topAlert,
-            bottomAlertLevel: bottomAlert
+            bottomAlertLevel: bottomAlert,
+            modelAlertActive: currentData?.modelAlert?.active == true
         )
     }
 
@@ -596,6 +626,16 @@ final class ProviderStatusController {
         } else {
             usageCreditsMenuItem?.isHidden = true
         }
+
+        if data.modelAlert?.active == true {
+            modelAlertMenuItem?.title = "    Expensive model: \(data.modelAlert?.model ?? "unknown")"
+            if let detail = data.modelAlert?.detail {
+                modelAlertMenuItem?.toolTip = detail
+            }
+            modelAlertMenuItem?.isHidden = false
+        } else {
+            modelAlertMenuItem?.isHidden = true
+        }
     }
 
     func hoverSummaryLines() -> [HoverMetricRow] {
@@ -637,8 +677,21 @@ final class ProviderStatusController {
         appendMenuItem(accuracyCheckMenuItem, to: &rows, tint: theme.tint) { [weak target, weak self] in target?.runAccuracyCheck(for: self) }
         appendMenuItem(extraCreditMenuItem, to: &rows, tint: theme.tint)
         appendMenuItem(usageCreditsMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openUsageCredits() }
+        appendMenuItem(modelAlertMenuItem, to: &rows, tint: NSColor.systemRed)
         appendMenuItem(apiCreditMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openApiCredit() }
         return rows
+    }
+
+    func activeModelAlertNotification() -> (key: String, title: String, body: String)? {
+        guard currentData?.modelAlert?.active == true else { return nil }
+        let model = currentData?.modelAlert?.model ?? "unknown"
+        let project = currentData?.modelAlert?.project ?? "unknown"
+        let key = "\(sectionTitle)|\(model)|\(project)"
+        return (
+            key,
+            "\(sectionTitle) expensive model active",
+            "\(model) in \(project). Switch back when this work is done."
+        )
     }
 
     private func appendMenuItem(_ item: NSMenuItem?, to rows: inout [HoverRow], tint: NSColor?, action: (() -> Void)? = nil) {
@@ -1144,11 +1197,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuModel: NSMenu?
     private var refreshTimer: Timer?
     private var barRedrawTimer: Timer?
+    private var alertFlashTimer: Timer?
     private var hoverPopover: NSPopover?
     private var hoverHideWorkItem: DispatchWorkItem?
     private let buildQueue = DispatchQueue(label: "agentic-tool-usage-tracker.menubar-build")
     private var claudeBuildInFlight = false
     private var codexBuildInFlight = false
+    private var activeModelNotificationKeys = Set<String>()
 
     private var barItemWidth: CGFloat {
         get {
@@ -1227,6 +1282,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         barRedrawTimer?.invalidate()
         barRedrawTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             self?.barView.needsDisplay = true
+        }
+        alertFlashTimer?.invalidate()
+        alertFlashTimer = Timer.scheduledTimer(withTimeInterval: 0.65, repeats: true) { [weak self] _ in
+            self?.tickAlertFlash()
         }
     }
 
@@ -1323,10 +1382,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshFromDataFiles() {
         controllers.forEach { $0.refresh() }
         barView.providers = controllers.map { $0.barState() }
+        if !hasActiveModelAlert() {
+            barView.alertFlashOn = true
+        }
+        notifyActiveModelAlerts()
         barView.needsDisplay = true
         if hoverPopover?.isShown == true {
             showUsageHover()
         }
+    }
+
+    private func hasActiveModelAlert() -> Bool {
+        controllers.contains { $0.barState().modelAlertActive }
+    }
+
+    private func tickAlertFlash() {
+        guard hasActiveModelAlert() else { return }
+        barView.alertFlashOn.toggle()
+        barView.needsDisplay = true
+    }
+
+    private func notifyActiveModelAlerts() {
+        let alerts = controllers.compactMap { $0.activeModelAlertNotification() }
+        let currentKeys = Set(alerts.map { $0.key })
+        activeModelNotificationKeys = activeModelNotificationKeys.intersection(currentKeys)
+        for alert in alerts where !activeModelNotificationKeys.contains(alert.key) {
+            deliverNotification(title: alert.title, body: alert.body)
+            activeModelNotificationKeys.insert(alert.key)
+        }
+    }
+
+    private func deliverNotification(title: String, body: String) {
+        let notification = NSUserNotification()
+        notification.title = title
+        notification.informativeText = body
+        notification.soundName = NSUserNotificationDefaultSoundName
+        NSUserNotificationCenter.default.deliver(notification)
     }
 
     private func showUsageHover() {

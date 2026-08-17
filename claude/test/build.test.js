@@ -11,7 +11,7 @@ const os = require("os");
 const {
   getPricing, calcCost, zeroCounts, addCounts, slugToPath,
   isRealPrompt, extractPromptText, enrichHistory, readJsonl,
-  buildMenubarData, applyUsageConfig,
+  buildMenubarData, applyUsageConfig, buildModelAlert,
 } = require("../scripts/build.js");
 
 let passed = 0;
@@ -65,6 +65,36 @@ test("returns default pricing for unknown model", () => {
 test("returns default pricing for null model", () => {
   const p = getPricing(null);
   assert.strictEqual(p.input, 3.0);
+});
+
+console.log("\nbuildModelAlert");
+
+test("alerts for recent Claude expensive models", () => {
+  const nowSec = Math.floor(Date.parse("2026-08-17T18:00:00.000Z") / 1000);
+  const alert = buildModelAlert([
+    {
+      model: "claude-opus-4-6-20260401",
+      project: "ai/tracker",
+      lastTs: "2026-08-17T17:45:00.000Z",
+    },
+  ], { nowSec });
+
+  assert.strictEqual(alert.active, true);
+  assert.strictEqual(alert.model, "claude-opus-4-6-20260401");
+  assert.strictEqual(alert.project, "ai/tracker");
+});
+
+test("ignores stale Claude expensive models", () => {
+  const nowSec = Math.floor(Date.parse("2026-08-17T18:00:00.000Z") / 1000);
+  const alert = buildModelAlert([
+    {
+      model: "claude-fable-5",
+      project: "ai/tracker",
+      lastTs: "2026-08-17T12:00:00.000Z",
+    },
+  ], { nowSec });
+
+  assert.strictEqual(alert, null);
 });
 
 // ---- calcCost ----
