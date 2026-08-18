@@ -203,41 +203,133 @@ function extractPromptText(entry) {
   return "";
 }
 
-// Collect all rate_limit hit timestamps across transcripts (first pass).
-// Returns sorted array of epoch timestamps. Used by readAllTranscripts to
-// classify each assistant turn as subscription-covered vs extra-credit.
-function collectRateLimitEpochs() {
-  if (!fs.existsSync(PROJECTS_DIR)) return [];
-  const epochs = [];
-  const dirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
-  for (const slug of dirs) {
-    const dp = path.join(PROJECTS_DIR, slug);
-    const files = fs.readdirSync(dp).filter(f => f.endsWith(".jsonl"));
-    for (const f of files) {
-      try {
-        const data = fs.readFileSync(path.join(dp, f), "utf8");
-        // Quick string check before parsing every line
-        if (!data.includes("rate_limit")) continue;
-        for (const line of data.split("\n")) {
-          if (!line || !line.includes("rate_limit")) continue;
-          try {
-            const e = JSON.parse(line);
-            if (e.error === "rate_limit" && e.timestamp) {
-              epochs.push(new Date(e.timestamp).getTime());
-            }
-          } catch {}
-        }
-      } catch {}
+// --- Unified transcript loader (single pass, mtime/size-cached) ---
+// ~/.claude/projects only ever grows, and used to get re-read from disk and
+// re-JSON.parsed in full, 4 separate times per build (once each in
+// collectRateLimitEpochs, deriveResetHours, readAllTranscripts,
+// buildWindowUsage) — so every build got slower as history accumulated,
+// without bound. This loader walks the tree once, parses each file once,
+// and caches the extracted per-line records by (mtime, size) in
+// data/.build-cache.json. Session files are append-only and frozen once a
+// session ends, so on a typical build only the 1-2 currently-active
+// sessions actually need re-parsing; everything else is served from cache
+// with zero disk I/O. All downstream consumers below read from this shared
+// per-file record list instead of touching the filesystem themselves.
+const BUILD_CACHE_PATH = path.join(DATA_DIR, ".build-cache.json");
+
+// Extract only the fields downstream logic needs from one transcript line,
+// discarding the rest (message bodies, tool_use blocks, thinking, etc.) so
+// the cache stays far smaller than the source transcripts.
+function extractRecord(entry) {
+  if (entry.error === "rate_limit") {
+    let resetHour = null;
+    const content = entry.message?.content;
+    let text = "";
+    if (Array.isArray(content)) { const t = content.find(c => c && c.type === "text"); if (t) text = t.text || ""; }
+    else if (typeof content === "string") text = content;
+    const m = text.match(/resets?\s+(\d+)(am|pm)/i);
+    if (m) {
+      let h = parseInt(m[1]);
+      if (m[2].toLowerCase() === "pm" && h !== 12) h += 12;
+      if (m[2].toLowerCase() === "am" && h === 12) h = 0;
+      resetHour = h;
     }
+    return { kind: "rate_limit", ts: entry.timestamp || null, resetHour };
   }
-  return epochs.sort((a, b) => a - b);
+  if (isRealPrompt(entry)) {
+    return { kind: "prompt", ts: entry.timestamp || null, uuid: entry.uuid || null, text: extractPromptText(entry) };
+  }
+  if (entry.type === "assistant" && entry.message?.usage) {
+    const model = entry.message.model;
+    if (!model || model === "<synthetic>") return null;
+    const usage = entry.message.usage;
+    return {
+      kind: "assistant",
+      ts: entry.timestamp || null,
+      model,
+      usage: {
+        input_tokens: usage.input_tokens || 0,
+        output_tokens: usage.output_tokens || 0,
+        cache_creation_input_tokens: usage.cache_creation_input_tokens || 0,
+        cache_read_input_tokens: usage.cache_read_input_tokens || 0,
+      },
+      cost: calcCost(usage, model),
+    };
+  }
+  return null;
 }
 
-function readAllTranscripts() {
-  if (!fs.existsSync(PROJECTS_DIR)) return { sessions: {}, perDay: {}, perProject: {}, totals: zeroCounts(), prompts: [], extraTotals: zeroCounts() };
+// Returns [{ filePath, sessionId, projectName, records }] — one entry per
+// transcript file, in the same directory/file traversal order the old
+// per-purpose scanners used, with records in original line order.
+function loadTranscriptFiles() {
+  if (!fs.existsSync(PROJECTS_DIR)) return [];
 
-  // Pre-collect rate_limit timestamps so we can classify turns as extra credit.
-  const rateLimitEpochs = collectRateLimitEpochs();
+  let cache = {};
+  try { cache = JSON.parse(fs.readFileSync(BUILD_CACHE_PATH, "utf8")); } catch {}
+
+  const nextCache = {};
+  const files = [];
+
+  const projectDirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
+  for (const projectSlug of projectDirs) {
+    const projectPath = path.join(PROJECTS_DIR, projectSlug);
+    const projectName = "/" + slugToPath(projectSlug);
+    // Root-level .jsonl only — skips the `subagents/` subfolder so subagent
+    // usage isn't double-counted (it already rolls up into the parent).
+    let names;
+    try { names = fs.readdirSync(projectPath).filter(f => f.endsWith(".jsonl")); } catch { continue; }
+
+    for (const f of names) {
+      const filePath = path.join(projectPath, f);
+      const sessionId = f.replace(".jsonl", "");
+      let stat;
+      try { stat = fs.statSync(filePath); } catch { continue; }
+
+      const cached = cache[filePath];
+      let records;
+      if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+        records = cached.records;
+      } else {
+        records = [];
+        try {
+          const lines = fs.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
+          for (const line of lines) {
+            let entry;
+            try { entry = JSON.parse(line); } catch { continue; }
+            const rec = extractRecord(entry);
+            if (rec) records.push(rec);
+          }
+        } catch { continue; }
+      }
+      nextCache[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, records };
+      files.push({ filePath, sessionId, projectName, records });
+    }
+  }
+
+  try { writeAtomic(BUILD_CACHE_PATH, JSON.stringify(nextCache)); } catch {}
+  return files;
+}
+
+// Global rate-limit context derived from the shared record set — small and
+// cheap regardless of history size, so no caching needed beyond the record
+// extraction above.
+function deriveRateLimitContext(files) {
+  const rateLimitEpochs = [];
+  const resetHours = new Set();
+  for (const f of files) {
+    for (const r of f.records) {
+      if (r.kind !== "rate_limit") continue;
+      if (r.ts) rateLimitEpochs.push(new Date(r.ts).getTime());
+      if (r.resetHour !== null && r.resetHour !== undefined) resetHours.add(r.resetHour);
+    }
+  }
+  rateLimitEpochs.sort((a, b) => a - b);
+  return { rateLimitEpochs, resetHours: [...resetHours].sort((a, b) => a - b) };
+}
+
+function readAllTranscripts(files, rateLimitEpochs) {
+  if (!files.length) return { sessions: {}, perDay: {}, perProject: {}, totals: zeroCounts(), prompts: [], extraTotals: zeroCounts() };
 
   // For a given assistant turn epoch, check if it falls after a rate_limit hit
   // within the same window. If so, it's extra credit usage.
@@ -276,118 +368,95 @@ function readAllTranscripts() {
   const extraPerProject = {};
   const prompts = [];
 
-  const projectDirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
+  for (const f of files) {
+    const { sessionId, projectName } = f;
+    let currentPrompt = null; // resets per transcript file
 
-  for (const projectSlug of projectDirs) {
-    const projectPath = path.join(PROJECTS_DIR, projectSlug);
-    const projectName = "/" + slugToPath(projectSlug);
-    // Root-level .jsonl only — skips the `subagents/` subfolder so subagent
-    // usage isn't double-counted (it already rolls up into the parent).
-    const files = fs.readdirSync(projectPath).filter(f => f.endsWith(".jsonl"));
+    for (const r of f.records) {
+      if (r.kind === "prompt") {
+        currentPrompt = {
+          sessionId,
+          uuid: r.uuid,
+          ts: r.ts,
+          project: projectName,
+          text: r.text,
+          cost: 0,
+          extraCost: 0,
+          turns: 0,
+          turnDetails: [],
+          counts: zeroCounts(),
+        };
+        // messages counter in zeroCounts() is meant for assistant turns;
+        // reset it so it reflects turns, not the 1 from initialization.
+        currentPrompt.counts.messages = 0;
+        prompts.push(currentPrompt);
+        continue;
+      }
 
-    for (const file of files) {
-      const sessionId = file.replace(".jsonl", "");
-      const filePath = path.join(projectPath, file);
-      try {
-        const lines = fs.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
-        let currentPrompt = null; // resets per transcript file
-        for (const line of lines) {
-          let entry;
-          try { entry = JSON.parse(line); } catch { continue; }
+      if (r.kind !== "assistant") continue;
+      const { model, usage, cost, ts } = r;
+      const day = ts ? ts.slice(0, 10) : "unknown";
+      const turnEpoch = ts ? new Date(ts).getTime() : 0;
+      const extra = isExtraCredit(turnEpoch) || FABLE_MODEL_RE.test(model);
 
-          // Start a new per-prompt bucket whenever we see a real user prompt.
-          if (isRealPrompt(entry)) {
-            const text = extractPromptText(entry);
-            currentPrompt = {
-              sessionId,
-              uuid: entry.uuid || null,
-              ts: entry.timestamp || null,
-              project: projectName,
-              text,
-              cost: 0,
-              extraCost: 0,
-              turns: 0,
-              turnDetails: [],
-              counts: zeroCounts(),
-            };
-            // messages counter in zeroCounts() is meant for assistant turns;
-            // reset it so it reflects turns, not the 1 from initialization.
-            currentPrompt.counts.messages = 0;
-            prompts.push(currentPrompt);
-            continue;
-          }
+      if (!sessions[sessionId]) {
+        sessions[sessionId] = { sessionId, project: projectName, model, counts: zeroCounts(), cost: 0, extraCost: 0, firstTs: ts, lastTs: ts };
+      }
+      addCounts(sessions[sessionId].counts, usage);
+      sessions[sessionId].cost += cost;
+      if (extra) sessions[sessionId].extraCost += cost;
+      if (ts < sessions[sessionId].firstTs) sessions[sessionId].firstTs = ts;
+      if (ts > sessions[sessionId].lastTs) sessions[sessionId].lastTs = ts;
 
-          if (entry.type !== "assistant" || !entry.message?.usage) continue;
-          const model = entry.message.model;
-          if (!model || model === "<synthetic>") continue;
+      if (!perDay[day]) perDay[day] = { counts: zeroCounts(), cost: 0 };
+      addCounts(perDay[day].counts, usage);
+      perDay[day].cost += cost;
 
-          const usage = entry.message.usage;
-          const cost = calcCost(usage, model);
-          const ts = entry.timestamp;
-          const day = ts ? ts.slice(0, 10) : "unknown";
-          const turnEpoch = ts ? new Date(ts).getTime() : 0;
-          const extra = isExtraCredit(turnEpoch) || FABLE_MODEL_RE.test(model);
+      if (!perProject[projectName]) perProject[projectName] = { counts: zeroCounts(), cost: 0 };
+      addCounts(perProject[projectName].counts, usage);
+      perProject[projectName].cost += cost;
 
-          if (!sessions[sessionId]) {
-            sessions[sessionId] = { sessionId, project: projectName, model, counts: zeroCounts(), cost: 0, extraCost: 0, firstTs: ts, lastTs: ts };
-          }
-          addCounts(sessions[sessionId].counts, usage);
-          sessions[sessionId].cost += cost;
-          if (extra) sessions[sessionId].extraCost += cost;
-          if (ts < sessions[sessionId].firstTs) sessions[sessionId].firstTs = ts;
-          if (ts > sessions[sessionId].lastTs) sessions[sessionId].lastTs = ts;
+      addCounts(totals, usage);
+      totals.cost = (totals.cost || 0) + cost;
 
-          if (!perDay[day]) perDay[day] = { counts: zeroCounts(), cost: 0 };
-          addCounts(perDay[day].counts, usage);
-          perDay[day].cost += cost;
+      if (extra) {
+        addCounts(extraTotals, usage);
+        extraTotals.cost = (extraTotals.cost || 0) + cost;
 
-          if (!perProject[projectName]) perProject[projectName] = { counts: zeroCounts(), cost: 0 };
-          addCounts(perProject[projectName].counts, usage);
-          perProject[projectName].cost += cost;
+        const extraLA = toLADate(ts);
+        const extraDay = `${extraLA.year}-${String(extraLA.month).padStart(2,"0")}-${String(extraLA.day).padStart(2,"0")}`;
+        if (!extraPerDay[extraDay]) extraPerDay[extraDay] = { cost: 0 };
+        extraPerDay[extraDay].cost += cost;
 
-          addCounts(totals, usage);
-          totals.cost = (totals.cost || 0) + cost;
+        if (!extraPerProject[projectName]) extraPerProject[projectName] = { cost: 0 };
+        extraPerProject[projectName].cost += cost;
+      }
 
-          if (extra) {
-            addCounts(extraTotals, usage);
-            extraTotals.cost = (extraTotals.cost || 0) + cost;
-
-            const extraLA = toLADate(ts);
-            const extraDay = `${extraLA.year}-${String(extraLA.month).padStart(2,"0")}-${String(extraLA.day).padStart(2,"0")}`;
-            if (!extraPerDay[extraDay]) extraPerDay[extraDay] = { cost: 0 };
-            extraPerDay[extraDay].cost += cost;
-
-            if (!extraPerProject[projectName]) extraPerProject[projectName] = { cost: 0 };
-            extraPerProject[projectName].cost += cost;
-          }
-
-          // Attribute this assistant turn to the in-flight prompt bucket.
-          if (currentPrompt) {
-            addCounts(currentPrompt.counts, usage);
-            currentPrompt.cost += cost;
-            if (extra) currentPrompt.extraCost += cost;
-            currentPrompt.turns += 1;
-            currentPrompt.turnDetails.push({
-              ts,
-              model: model || 'unknown',
-              cost,
-              extra,
-              in: usage.input_tokens || 0,
-              out: usage.output_tokens || 0,
-              cw: usage.cache_creation_input_tokens || 0,
-              cr: usage.cache_read_input_tokens || 0,
-            });
-          }
-        }
-      } catch { /* skip */ }
+      // Attribute this assistant turn to the in-flight prompt bucket.
+      if (currentPrompt) {
+        addCounts(currentPrompt.counts, usage);
+        currentPrompt.cost += cost;
+        if (extra) currentPrompt.extraCost += cost;
+        currentPrompt.turns += 1;
+        currentPrompt.turnDetails.push({
+          ts,
+          model: model || 'unknown',
+          cost,
+          extra,
+          in: usage.input_tokens || 0,
+          out: usage.output_tokens || 0,
+          cw: usage.cache_creation_input_tokens || 0,
+          cr: usage.cache_read_input_tokens || 0,
+        });
+      }
     }
   }
 
   return { sessions, perDay, perProject, totals, prompts, extraTotals, extraPerDay, extraPerProject };
 }
 
-function buildTokens() {
-  const data = readAllTranscripts();
+function buildTokens(files, rateLimitEpochs) {
+  const data = readAllTranscripts(files, rateLimitEpochs);
   const sessionList = Object.values(data.sessions)
     .sort((a, b) => (b.lastTs || "").localeCompare(a.lastTs || ""))
     .slice(0, 100);
@@ -450,45 +519,17 @@ function enrichHistory(history, prompts) {
 }
 
 // --- Rate-limit window helpers ---
-// Known reset hours — derived from rate_limit messages. Cached after first
-// call to buildWindowUsage(). For the initial pass (collectRateLimitEpochs →
-// readAllTranscripts), we pre-derive them.
-let _cachedResetHours = null;
+// Known reset hours — derived from rate_limit messages via
+// deriveRateLimitContext() and pushed in here once per build (see build())
+// before readAllTranscripts()/buildWindowUsage() consume them, instead of
+// each independently re-scanning transcripts for the same data.
+let _cachedResetHours = [];
+
+function setResetHours(hours) {
+  _cachedResetHours = hours;
+}
 
 function deriveResetHours() {
-  if (_cachedResetHours) return _cachedResetHours;
-  if (!fs.existsSync(PROJECTS_DIR)) return [];
-  const hours = new Set();
-  const dirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
-  for (const slug of dirs) {
-    const dp = path.join(PROJECTS_DIR, slug);
-    const files = fs.readdirSync(dp).filter(f => f.endsWith(".jsonl"));
-    for (const f of files) {
-      try {
-        const data = fs.readFileSync(path.join(dp, f), "utf8");
-        if (!data.includes("rate_limit")) continue;
-        for (const line of data.split("\n")) {
-          if (!line || !line.includes("rate_limit")) continue;
-          try {
-            const e = JSON.parse(line);
-            if (e.error !== "rate_limit") continue;
-            const content = e.message?.content;
-            let text = "";
-            if (Array.isArray(content)) { const t = content.find(c => c && c.type === "text"); if (t) text = t.text || ""; }
-            else if (typeof content === "string") text = content;
-            const m = text.match(/resets?\s+(\d+)(am|pm)/i);
-            if (m) {
-              let h = parseInt(m[1]);
-              if (m[2].toLowerCase() === "pm" && h !== 12) h += 12;
-              if (m[2].toLowerCase() === "am" && h === 12) h = 0;
-              hours.add(h);
-            }
-          } catch {}
-        }
-      } catch {}
-    }
-  }
-  _cachedResetHours = [...hours].sort((a, b) => a - b);
   return _cachedResetHours;
 }
 
@@ -696,65 +737,20 @@ function readCoworkSessions() {
   return sessions;
 }
 
-function buildWindowUsage(coworkSessions) {
-  if (!fs.existsSync(PROJECTS_DIR)) return null;
-
+function buildWindowUsage(files, coworkSessions) {
   // Pass 1: collect all assistant usage entries and rate_limit entries
   const usageEntries = [];   // { ts (ISO), epoch, cost }
   const rateLimitHits = [];  // { ts, epoch, resetHour }
 
-  const projectDirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
-    .filter(d => d.isDirectory()).map(d => d.name);
-
-  for (const slug of projectDirs) {
-    const projectPath = path.join(PROJECTS_DIR, slug);
-    const files = fs.readdirSync(projectPath).filter(f => f.endsWith(".jsonl"));
-    for (const file of files) {
-      try {
-        const lines = fs.readFileSync(path.join(projectPath, file), "utf8").split("\n").filter(Boolean);
-        for (const line of lines) {
-          let entry;
-          try { entry = JSON.parse(line); } catch { continue; }
-
-          // Rate limit hit
-          if (entry.error === "rate_limit" && entry.timestamp) {
-            let resetHour = null;
-            const content = entry.message?.content;
-            let text = "";
-            if (Array.isArray(content)) {
-              const t = content.find(c => c && c.type === "text");
-              if (t) text = t.text || "";
-            } else if (typeof content === "string") {
-              text = content;
-            }
-            const m = text.match(/resets?\s+(\d+)(am|pm)/i);
-            if (m) {
-              let h = parseInt(m[1]);
-              if (m[2].toLowerCase() === "pm" && h !== 12) h += 12;
-              if (m[2].toLowerCase() === "am" && h === 12) h = 0;
-              resetHour = h;
-            }
-            rateLimitHits.push({
-              ts: entry.timestamp,
-              epoch: new Date(entry.timestamp).getTime(),
-              resetHour,
-            });
-            continue;
-          }
-
-          // Assistant usage
-          if (entry.type === "assistant" && entry.message?.usage && entry.timestamp) {
-            const model = entry.message.model;
-            if (!model || model === "<synthetic>") continue;
-            const cost = calcCost(entry.message.usage, model);
-            usageEntries.push({
-              ts: entry.timestamp,
-              epoch: new Date(entry.timestamp).getTime(),
-              cost,
-            });
-          }
-        }
-      } catch { /* skip */ }
+  for (const f of files) {
+    for (const r of f.records) {
+      if (r.kind === "rate_limit") {
+        if (!r.ts) continue;
+        rateLimitHits.push({ ts: r.ts, epoch: new Date(r.ts).getTime(), resetHour: r.resetHour });
+      } else if (r.kind === "assistant") {
+        if (!r.ts) continue;
+        usageEntries.push({ ts: r.ts, epoch: new Date(r.ts).getTime(), cost: r.cost });
+      }
     }
   }
 
@@ -1194,10 +1190,16 @@ function build(argv = process.argv.slice(2)) {
   const t0 = Date.now();
   const menubarOnly = argv.includes(MENUBAR_ONLY_FLAG);
 
-  const tokens = buildTokens();
+  // Single shared read+parse of ~/.claude/projects, cached by file
+  // mtime/size across builds — see loadTranscriptFiles().
+  const transcriptFiles = loadTranscriptFiles();
+  const rateLimitContext = deriveRateLimitContext(transcriptFiles);
+  setResetHours(rateLimitContext.resetHours);
+
+  const tokens = buildTokens(transcriptFiles, rateLimitContext.rateLimitEpochs);
   // Cowork sessions — read once, used for window detection + data merging
   const coworkSessions = readCoworkSessions();
-  const windowUsage = buildWindowUsage(coworkSessions);
+  const windowUsage = buildWindowUsage(transcriptFiles, coworkSessions);
   const config = readConfig();
   applyUsageConfig(config, windowUsage, tokens);
 

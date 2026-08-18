@@ -1,8 +1,10 @@
 node_modules/
+__pycache__/
 claude/data/config.json
 claude/data/data.js
 claude/data/events.jsonl
 claude/data/events-*.jsonl
+claude/data/.build-cache.json
 codex/data/data.js
 codex/data/events.jsonl
 codex/data/events-*.jsonl

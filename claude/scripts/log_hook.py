@@ -32,6 +32,14 @@ try:
 except json.JSONDecodeError:
     data = {"raw": raw}
 
+# tool_response carries the full raw output of every tool call (entire file
+# contents, full command output, etc.) — nothing in build.js or report.html
+# ever reads it, but it dominated events.jsonl (individual entries seen over
+# 2MB) and therefore data.js, which ballooned to 235MB. Drop it at the
+# source instead of paying to write, rotate, re-read, and re-serialize it
+# forever downstream.
+data.pop("tool_response", None)
+
 entry = {
     "event_type": event_type,
     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -54,8 +62,27 @@ with open(DATA_FILE, "a") as f:
 
 # Kick off a backgrounded rebuild of data.js so refreshing the dashboard
 # always reflects the latest state. We don't wait for it.
+#
+# Guarded by pgrep: PreToolUse/PostToolUse fire on every tool call across
+# every open session, and a rebuild walks the full ~/.claude/projects tree,
+# so without this check concurrent hook events pile up dozens of overlapping
+# node processes and exhaust system memory (seen: 71 concurrent instances,
+# ~40GB RSS, triggering a Jetsam kill and a WindowServer-watchdog forced
+# reset). Skip spawning if a rebuild is already in flight.
+def _build_already_running():
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", BUILD_SCRIPT],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        return bool(result.stdout.strip())
+    except Exception:
+        return False
+
 try:
-    if os.path.exists(BUILD_SCRIPT):
+    if os.path.exists(BUILD_SCRIPT) and not _build_already_running():
         with open(os.devnull, "wb") as devnull:
             subprocess.Popen(
                 ["node", BUILD_SCRIPT],
