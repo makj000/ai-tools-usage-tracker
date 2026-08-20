@@ -762,6 +762,18 @@ function buildWindowUsage(files, coworkSessions) {
   usageEntries.sort((a, b) => a.epoch - b.epoch);
   if (!usageEntries.length) return null;
 
+  // Hourly cost buckets over the last 9 days (7d window + buffer, since the
+  // real reset instant rarely lands on a UTC hour boundary) — feeds the
+  // menu-bar weekly sparkline. Keyed by UTC-hour-start epoch (ms).
+  const HOUR_MS = 60 * 60 * 1000;
+  const hourlyLookbackCutoff = Date.now() - 9 * 24 * HOUR_MS;
+  const recentHourly = {};
+  for (const u of usageEntries) {
+    if (u.epoch < hourlyLookbackCutoff) continue;
+    const hourEpoch = Math.floor(u.epoch / HOUR_MS) * HOUR_MS;
+    recentHourly[hourEpoch] = (recentHourly[hourEpoch] || 0) + u.cost;
+  }
+
   // Rolling 5h windows: a new window starts at the first usage event after the
   // previous window closes. This matches Claude's actual behaviour where windows
   // are anchored to session-start time, not fixed clock boundaries.
@@ -930,6 +942,7 @@ function buildWindowUsage(files, coworkSessions) {
 
   return {
     resetHours,
+    recentHourly,
     windowStartEpoch: isCurrentActive ? currentWin.startEpoch : null,
     windowEndEpoch: isCurrentActive ? currentWin.endEpoch : null,
     windowStartTs: isCurrentActive ? new Date(currentWin.startEpoch).toISOString() : null,
@@ -1079,6 +1092,36 @@ function applyUsageConfig(config, windowUsage, tokens) {
   }
 }
 
+// Slices wu.recentHourly into the current 7-day weekly window for the
+// hover-panel sparkline. Only returns data when a real (live-API) reset
+// epoch is known — mirrors buildWeeklyCycleFromReset's gating, so there's
+// no new "stale estimate" case for the client to reason about.
+function buildWeeklySpark(wu, weeklyResetEpochSec, nowSec) {
+  if (!Number.isInteger(weeklyResetEpochSec) || !wu?.recentHourly) return null;
+  const HOUR_MS = 60 * 60 * 1000;
+  const windowEndMs = weeklyResetEpochSec * 1000;
+  const windowStartMs = Math.floor((windowEndMs - 7 * 24 * HOUR_MS) / HOUR_MS) * HOUR_MS;
+  const nowMs = nowSec * 1000;
+
+  const hourly = [];
+  for (let t = windowStartMs; t < windowEndMs && t < nowMs; t += HOUR_MS) {
+    hourly.push({ epoch: Math.floor(t / 1000), cost: +(wu.recentHourly[t] || 0).toFixed(4) });
+  }
+
+  const maxedHours = [...new Set(
+    (wu.hitEpochs || [])
+      .filter(ms => ms >= windowStartMs && ms < nowMs)
+      .map(ms => Math.floor((Math.floor(ms / HOUR_MS) * HOUR_MS) / 1000))
+  )];
+
+  return {
+    windowStartEpoch: Math.floor(windowStartMs / 1000),
+    windowEndEpoch: weeklyResetEpochSec,
+    hourly,
+    maxedHours,
+  };
+}
+
 function buildMenubarData(wu, extraTotals, extraPurchasedSeed, options = {}) {
   const rateLimits = options.rateLimits ?? readStatuslineRateLimits();
     // Treat cached pct as stale once the window's resets_at is in the past:
@@ -1134,6 +1177,7 @@ function buildMenubarData(wu, extraTotals, extraPurchasedSeed, options = {}) {
     const weeklyCycle = todayDate
       ? buildWeeklyCycleFromReset(todayDate, weeklyResetEpoch)
       : null;
+    const weeklySpark = buildWeeklySpark(wu, weeklyResetEpoch, nowSec);
     return {
       updatedAt: new Date().toISOString(),
       title: "Claude",
@@ -1145,6 +1189,7 @@ function buildMenubarData(wu, extraTotals, extraPurchasedSeed, options = {}) {
       window: windowMetric,
       weekly: weeklyMetric,
       weeklyCycle,
+      weeklySpark,
       extraSpent: typeof extraTotals?.cost === "number" ? +extraTotals.cost.toFixed(4) : null,
       extraPurchased: typeof extraPurchasedSeed === "number" ? +extraPurchasedSeed.toFixed(4) : null,
       // Manually maintained in config.json — claude.ai has no API for this,

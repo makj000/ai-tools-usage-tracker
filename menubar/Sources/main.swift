@@ -37,6 +37,7 @@ struct MenubarData: Codable {
     let weekly: MetricData?
     let fableWeekly: MetricData?
     let weeklyCycle: WeeklyCycleData?
+    let weeklySpark: WeeklySparkData?
     let extraSpent: Double?
     let extraPurchased: Double?
     let usageCreditsBalance: Double?
@@ -61,6 +62,18 @@ struct MenubarData: Codable {
         let totalDots: Int
         let activeDots: Int
         let resetEpoch: Double?
+    }
+
+    struct WeeklySparkData: Codable {
+        let windowStartEpoch: Double?
+        let windowEndEpoch: Double?
+        let hourly: [HourlyBucket]?
+        let maxedHours: [Double]?
+
+        struct HourlyBucket: Codable {
+            let epoch: Double
+            let cost: Double
+        }
     }
 
     struct ModelAlertData: Codable {
@@ -666,10 +679,40 @@ final class ProviderStatusController {
         return lines
     }
 
+    // Only meaningful when the live weekly reset epoch is known (same gate
+    // build.js uses for weeklySpark itself) and the window hasn't already
+    // rolled over since the last build — a stale snapshot falls back to the
+    // plain secondary text row instead of showing a dead chart.
+    private func weeklySparkModel() -> WeeklySparkModel? {
+        guard let spark = currentData?.weeklySpark,
+              let start = spark.windowStartEpoch,
+              let end = spark.windowEndEpoch,
+              end > start,
+              let hourlyRaw = spark.hourly, !hourlyRaw.isEmpty,
+              let pct = currentData?.resolvedSecondary?.pct
+        else { return nil }
+        let now = Date().timeIntervalSince1970
+        guard now < end else { return nil }
+        let buckets = hourlyRaw.map { WeeklySparkModel.HourBucket(epoch: $0.epoch, cost: max(0, $0.cost)) }
+        return WeeklySparkModel(
+            windowStartEpoch: start,
+            windowEndEpoch: end,
+            hourly: buckets,
+            maxedEpochs: Set(spark.maxedHours ?? []),
+            currentPct: max(0, min(1, pct)),
+            nowEpoch: now,
+            tint: theme.tint
+        )
+    }
+
     func hoverMenuRows(target: AppDelegate) -> [HoverRow] {
         var rows: [HoverRow] = [.header(sectionTitle, theme.tint)]
         appendMenuItem(primaryMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
-        appendMenuItem(secondaryMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
+        if let sparkModel = weeklySparkModel() {
+            rows.append(.weeklySpark(sparkModel))
+        } else {
+            appendMenuItem(secondaryMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
+        }
         appendMenuItem(tertiaryMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
         appendMenuItem(openMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
         appendMenuItem(openUsageMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openUsagePage() }
@@ -954,7 +997,23 @@ enum HoverRow {
     case button(title: String, tint: NSColor?, action: () -> Void)
     case metric(HoverMetricRow)
     case slider(label: String, value: Double, minValue: Double, maxValue: Double, onChange: (CGFloat) -> Void)
+    case weeklySpark(WeeklySparkModel)
     case separator
+}
+
+// Precomputed inputs for WeeklySparkView — all client-side math (cumulative
+// sum, pace-color tiers, idle runs, exhaustion projection) lives in the view
+// itself, not here, so a stale JSON snapshot never shows a wrong "now".
+struct WeeklySparkModel {
+    struct HourBucket { let epoch: Double; let cost: Double }
+
+    let windowStartEpoch: Double
+    let windowEndEpoch: Double
+    let hourly: [HourBucket]   // elapsed hours only, oldest → newest
+    let maxedEpochs: Set<Double>
+    let currentPct: Double     // authoritative "now" position, 0...1
+    let nowEpoch: Double
+    let tint: NSColor
 }
 
 final class HoverSeparatorView: NSView {
@@ -1124,6 +1183,285 @@ final class HoverButtonLineView: NSView {
     }
 }
 
+// Weekly usage sparkline for the hover panel: a monotonic cumulative line
+// (pace-colored, gray when idle), a headline exhaustion/reset countdown,
+// idle "rest" bands, and red rings on hours a 5h window actually maxed out.
+// All numeric derivation (cumulative sum, pace tiers, idle runs, exhaustion
+// projection) happens here from raw hourly costs, not in build.js, so a
+// stale JSON snapshot never freezes a stale "now" position on screen.
+final class WeeklySparkView: NSView {
+    static let contentWidth: CGFloat = 420
+    static let totalHeight: CGFloat = 134
+
+    private let model: WeeklySparkModel
+
+    init(model: WeeklySparkModel) {
+        self.model = model
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.contentWidth, height: Self.totalHeight))
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let W = bounds.width
+        let idleColor = NSColor(calibratedWhite: 0.49, alpha: 1)
+        let rateStops: [NSColor] = [
+            NSColor(calibratedRed: 0.965, green: 0.788, blue: 0.627, alpha: 1),
+            NSColor(calibratedRed: 0.941, green: 0.658, blue: 0.4, alpha: 1),
+            NSColor(calibratedRed: 0.910, green: 0.525, blue: 0.227, alpha: 1),
+            NSColor(calibratedRed: 0.761, green: 0.255, blue: 0.047, alpha: 1),
+        ]
+        let maxedColor = NSColor(calibratedRed: 0.878, green: 0.365, blue: 0.290, alpha: 1)
+        let resetColor = NSColor(calibratedRed: 0.290, green: 0.616, blue: 1.0, alpha: 1)
+        let restFill = NSColor(calibratedRed: 0.47, green: 0.55, blue: 0.667, alpha: 0.10)
+        let restStroke = NSColor(calibratedRed: 0.47, green: 0.55, blue: 0.667, alpha: 0.4)
+
+        let totalWeekHours = max((model.windowEndEpoch - model.windowStartEpoch) / 3600.0, 1)
+        func hourOffset(_ epoch: Double) -> CGFloat { CGFloat((epoch - model.windowStartEpoch) / 3600.0) }
+        func x(_ hours: CGFloat) -> CGFloat { max(0, min(W, (hours / CGFloat(totalWeekHours)) * W)) }
+
+        // ---- Layout ----
+        let headlineY: CGFloat = 0
+        let subY: CGFloat = 16
+        let chartTop: CGFloat = 30
+        let chartPadTop: CGFloat = 3
+        let chartH: CGFloat = 52
+        let lineTopY = chartTop + chartPadTop
+        let lineBottomY = lineTopY + chartH
+        func y(_ pct: CGFloat) -> CGFloat { lineTopY + (1 - max(0, min(1, pct))) * chartH }
+        let stripY = lineBottomY + 4
+        let stripH: CGFloat = 9
+        let axisBaselineY = stripY + stripH + 4 + 8
+        let legendY = chartTop + chartPadTop + chartH + 4 + stripH + 4 + 11 + 5
+
+        // ---- Headline: whichever finishes first, exhaustion or reset ----
+        let flat = model.hourly.map { max(0, $0.cost) }
+        let hourOffsets = model.hourly.map { hourOffset($0.epoch) }
+        let nowIdx = flat.count
+        let observedTotal = flat.reduce(0, +)
+
+        var cum = [CGFloat](repeating: 0, count: nowIdx)
+        if nowIdx > 0 {
+            var running: Double = 0
+            for i in 0..<nowIdx {
+                running += flat[i]
+                cum[i] = observedTotal > 0 ? CGFloat(running / observedTotal * model.currentPct) : 0
+            }
+        }
+
+        let nowHourOffset = min(CGFloat(totalWeekHours), hourOffset(model.nowEpoch))
+        let hoursToReset = max(0, CGFloat(totalWeekHours) - nowHourOffset)
+
+        let lookback = min(24, nowIdx)
+        var hoursToExhaustion: CGFloat = .infinity
+        if nowIdx > 0, lookback > 0 {
+            let startI = nowIdx - lookback
+            let ratePerHour = (cum[nowIdx - 1] - (startI > 0 ? cum[startI - 1] : 0)) / CGFloat(lookback)
+            let remainingCapacity = max(0, 1 - cum[nowIdx - 1])
+            if ratePerHour > 0 { hoursToExhaustion = remainingCapacity / ratePerHour }
+        }
+        let exhaustsFirst = hoursToExhaustion < hoursToReset
+
+        func fmtHM(_ hours: CGFloat) -> String {
+            guard hours.isFinite, hours >= 0 else { return "—" }
+            let totalMin = Int((hours * 60).rounded())
+            return "\(totalMin / 60)h \(String(format: "%02d", totalMin % 60))m"
+        }
+        func fmtClock(_ epoch: Double) -> String {
+            let formatter = DateFormatter()
+            formatter.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "MMM d, h:mm a"
+            return formatter.string(from: Date(timeIntervalSince1970: epoch))
+        }
+
+        let headlineColor = exhaustsFirst ? rateStops[3] : resetColor
+        let headlineText = exhaustsFirst
+            ? "⚠ exhausts in \(fmtHM(hoursToExhaustion)) — before reset"
+            : "✓ resets in \(fmtHM(hoursToReset))"
+        let exhaustEpoch = model.nowEpoch + Double(hoursToExhaustion) * 3600
+        let subText = exhaustsFirst
+            ? "at this pace, ~\(fmtClock(exhaustEpoch)) · resets \(fmtClock(model.windowEndEpoch))"
+            : "\(fmtClock(model.windowEndEpoch)) · at this pace you won't hit the ceiling first"
+
+        drawText(headlineText, x: 0, y: headlineY, width: W, font: .boldSystemFont(ofSize: 12), color: headlineColor)
+        drawText(subText, x: 0, y: subY, width: W, font: .systemFont(ofSize: 9.5), color: NSColor(calibratedWhite: 0.55, alpha: 1))
+
+        guard nowIdx > 0 else {
+            drawText("No usage recorded yet this week", x: 0, y: chartTop + 20, width: W, font: .systemFont(ofSize: 10.5), color: NSColor(calibratedWhite: 0.55, alpha: 1))
+            return
+        }
+
+        // ---- Day gridlines (orientation only — never the source of the countdown) ----
+        let gridColor = NSColor(calibratedWhite: 1, alpha: 0.08)
+        var day: CGFloat = 0
+        while day < CGFloat(totalWeekHours) {
+            let gx = x(day)
+            let grid = NSBezierPath()
+            grid.move(to: NSPoint(x: gx, y: lineTopY))
+            grid.line(to: NSPoint(x: gx, y: stripY + stripH))
+            grid.lineWidth = 1
+            gridColor.setStroke()
+            grid.stroke()
+            day += 24
+        }
+        let ceilingLine = NSBezierPath()
+        ceilingLine.move(to: NSPoint(x: 0, y: y(1)))
+        ceilingLine.line(to: NSPoint(x: W, y: y(1)))
+        ceilingLine.lineWidth = 1
+        setDashed(ceilingLine, [2, 2])
+        NSColor(calibratedWhite: 1, alpha: 0.14).setStroke()
+        ceilingLine.stroke()
+
+        // ---- Idle-run rest bands (>=4 consecutive zero-cost hours) ----
+        var runStart: Int? = nil
+        var restRuns: [(Int, Int)] = []
+        for i in 0..<nowIdx {
+            if flat[i] <= 0 {
+                if runStart == nil { runStart = i }
+            } else if let s = runStart {
+                if i - s >= 4 { restRuns.append((s, i)) }
+                runStart = nil
+            }
+        }
+        if let s = runStart, nowIdx - s >= 4 { restRuns.append((s, nowIdx)) }
+        for (s, e) in restRuns {
+            let bx = x(hourOffsets[s])
+            let bw = x(e < nowIdx ? hourOffsets[e] : CGFloat(totalWeekHours)) - bx
+            let band = NSBezierPath(roundedRect: NSRect(x: bx, y: stripY - 0.5, width: bw, height: stripH + 1), xRadius: 2.5, yRadius: 2.5)
+            restFill.setFill()
+            NSBezierPath(rect: NSRect(x: bx, y: lineTopY, width: bw, height: stripY + stripH - lineTopY)).fill()
+            restStroke.setStroke()
+            band.lineWidth = 0.8
+            band.stroke()
+        }
+
+        // ---- Cumulative line: colored runs by pace, gray when idle ----
+        var points: [NSPoint] = [NSPoint(x: 0, y: y(0))]
+        for i in 0..<nowIdx { points.append(NSPoint(x: x(hourOffsets[i]), y: y(cum[i]))) }
+        let maxRate = max(flat.max() ?? 0, 0.0001)
+        func rateColor(_ v: Double) -> NSColor {
+            if v <= 0 { return idleColor }
+            let r = v / maxRate
+            let idx = min(rateStops.count - 1, Int(r * Double(rateStops.count)))
+            return rateStops[idx]
+        }
+
+        // Area fill under the full cumulative shape.
+        let area = NSBezierPath()
+        area.move(to: NSPoint(x: 0, y: y(0)))
+        for p in points.dropFirst() { area.line(to: p) }
+        area.line(to: NSPoint(x: points.last!.x, y: y(0)))
+        area.close()
+        model.tint.withAlphaComponent(0.14).setFill()
+        area.fill()
+
+        var runD = NSBezierPath()
+        runD.move(to: points[0])
+        var runColor = rateColor(flat[0])
+        func flushRun() {
+            runD.lineWidth = 1.7
+            runD.lineCapStyle = .round
+            runD.lineJoinStyle = .round
+            runColor.setStroke()
+            runD.stroke()
+        }
+        for k in 1..<points.count {
+            let color = rateColor(flat[k - 1])
+            if !color.isEqual(runColor) {
+                runD.line(to: points[k - 1])
+                flushRun()
+                runD = NSBezierPath()
+                runD.move(to: points[k - 1])
+                runColor = color
+            }
+            runD.line(to: points[k])
+        }
+        flushRun()
+
+        // ---- Maxed-window markers: red ring on the line + red tick on the strip ----
+        for (i, offset) in hourOffsets.enumerated() where model.maxedEpochs.contains(model.hourly[i].epoch) {
+            let mx = x(offset), my = y(cum[i])
+            let ring = NSBezierPath(ovalIn: NSRect(x: mx - 4, y: my - 4, width: 8, height: 8))
+            ring.lineWidth = 1.3
+            maxedColor.setStroke()
+            ring.stroke()
+            maxedColor.setFill()
+            NSBezierPath(ovalIn: NSRect(x: mx - 1.6, y: my - 1.6, width: 3.2, height: 3.2)).fill()
+            NSBezierPath(rect: NSRect(x: mx - 0.6, y: stripY - 1, width: 1.2, height: stripH + 2)).fill()
+        }
+
+        // ---- Activity strip: one cell per elapsed hour, lit when active ----
+        NSColor(calibratedWhite: 1, alpha: 0.05).setFill()
+        NSBezierPath(roundedRect: NSRect(x: 0, y: stripY, width: x(hourOffsets.last ?? 0), height: stripH), xRadius: 2, yRadius: 2).fill()
+        let cellW = max(W / CGFloat(totalWeekHours) - 0.4, 0.6)
+        for i in 0..<nowIdx where flat[i] > 0 {
+            let cx = x(hourOffsets[i])
+            model.tint.withAlphaComponent(min(0.4 + CGFloat(flat[i]) / 20, 1)).setFill()
+            NSBezierPath(rect: NSRect(x: cx, y: stripY + 1.5, width: cellW, height: stripH - 3)).fill()
+        }
+
+        // ---- Projection: last 24h pace extrapolated to the ceiling ----
+        let nowX = x(nowHourOffset)
+        let nowY = y(cum[nowIdx - 1])
+        if hoursToExhaustion.isFinite {
+            let exhaustX = min(nowX + (hoursToExhaustion / CGFloat(totalWeekHours)) * W, W - 1)
+            let proj = NSBezierPath()
+            proj.move(to: NSPoint(x: nowX, y: nowY))
+            proj.line(to: NSPoint(x: exhaustX, y: y(1)))
+            proj.lineWidth = 1.3
+            proj.lineCapStyle = .round
+            setDashed(proj, [2.5, 2.5])
+            rateStops[2].withAlphaComponent(0.6).setStroke()
+            proj.stroke()
+        }
+
+        model.tint.setFill()
+        NSBezierPath(ovalIn: NSRect(x: nowX - 2.6, y: nowY - 2.6, width: 5.2, height: 5.2)).fill()
+
+        // ---- Reset marker: real epoch, independent of the day gridlines ----
+        let resetLine = NSBezierPath()
+        resetLine.move(to: NSPoint(x: W - 0.5, y: lineTopY))
+        resetLine.line(to: NSPoint(x: W - 0.5, y: stripY + stripH))
+        resetLine.lineWidth = 1.5
+        resetColor.setStroke()
+        resetLine.stroke()
+
+        // ---- Day-of-week labels along the axis ----
+        let calendar = Calendar(identifier: .gregorian)
+        var laCalendar = calendar
+        laCalendar.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
+        let weekdayFmt = DateFormatter()
+        weekdayFmt.locale = Locale(identifier: "en_US_POSIX")
+        weekdayFmt.timeZone = laCalendar.timeZone
+        weekdayFmt.dateFormat = "EEE"
+        day = 0
+        while day < CGFloat(totalWeekHours) {
+            let epoch = model.windowStartEpoch + Double(day) * 3600
+            let label = weekdayFmt.string(from: Date(timeIntervalSince1970: epoch))
+            let isToday = Calendar.current.isDateInToday(Date(timeIntervalSince1970: epoch))
+            drawText(label, x: x(day) + 2, y: axisBaselineY - 8, width: 40, font: .systemFont(ofSize: 8.5), color: isToday ? model.tint : NSColor(calibratedWhite: 0.44, alpha: 1))
+            day += 24
+        }
+
+        // ---- Mini legend ----
+        drawText("● pace  ● no usage  ○ 5h maxed  ▮ reset", x: 0, y: legendY, width: W, font: .systemFont(ofSize: 8.5), color: NSColor(calibratedWhite: 0.5, alpha: 1))
+    }
+
+    private func setDashed(_ path: NSBezierPath, _ pattern: [CGFloat]) {
+        path.setLineDash(pattern, count: pattern.count, phase: 0)
+    }
+
+    private func drawText(_ text: String, x: CGFloat, y: CGFloat, width: CGFloat, font: NSFont, color: NSColor) {
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        NSAttributedString(string: text, attributes: attrs).draw(in: NSRect(x: x, y: y, width: width, height: font.pointSize + 4))
+    }
+}
+
 final class HoverTrackingView: NSView {
     var onMouseEntered: (() -> Void)?
     var onMouseExited: (() -> Void)?
@@ -1170,12 +1508,21 @@ final class UsageHoverViewController: NSViewController {
                 stack.addArrangedSubview(HoverMetricLineView(row: row))
             case .slider(let label, let value, let minValue, let maxValue, let onChange):
                 stack.addArrangedSubview(HoverSliderLineView(label: label, value: value, minValue: minValue, maxValue: maxValue, onChange: onChange))
+            case .weeklySpark(let model):
+                stack.addArrangedSubview(WeeklySparkView(model: model))
             case .separator:
                 stack.addArrangedSubview(HoverSeparatorView(frame: NSRect(x: 0, y: 0, width: 420, height: 1)))
             }
         }
 
-        let height = max(38, rows.count * 24 + 20)
+        // Base formula assumes every row is a plain ~24pt text/metric line;
+        // a weeklySpark row is much taller, so add its real height on top of
+        // the 24pt it already contributed to the base estimate.
+        let sparkExtra = rows.reduce(CGFloat(0)) { sum, row in
+            if case .weeklySpark = row { return sum + (WeeklySparkView.totalHeight - 24) }
+            return sum
+        }
+        let height = max(38, rows.count * 24 + 20) + Int(sparkExtra)
         let container = HoverTrackingView(frame: NSRect(x: 0, y: 0, width: 444, height: height))
         container.onMouseEntered = onMouseEntered
         container.onMouseExited = onMouseExited
