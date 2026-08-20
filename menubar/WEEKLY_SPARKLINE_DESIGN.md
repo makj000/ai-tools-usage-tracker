@@ -107,7 +107,35 @@ highlight):
     from `wu.hitEpochs`. Returns `null` when there's no live reset epoch
     (mirrors `buildWeeklyCycleFromReset`'s existing gating).
 - `menubar/Sources/main.swift`:
-  - New `WeeklySparkView: NSView` (or similar) implementing the draw logic
-    above, added as a `HoverRow` case in `UsageHoverViewController`, replacing
-    the current plain-text weekly line.
-  - Popover width grows to accommodate the wider chart.
+  - `WeeklySparkView: NSView` implementing the draw logic above, added as a
+    `HoverRow` case in `UsageHoverViewController`, replacing the plain-text
+    weekly line. Fits within the existing 420pt content column, no popover
+    widening needed.
+  - Written provider-agnostic from the start: it only reads `MenubarData`,
+    so `ProviderStatusController` renders it for *any* provider whose JSON
+    carries a `weeklySpark` field — no Swift changes needed to add a second
+    provider (see Codex below).
+
+### Codex (`codex/scripts/build.js`)
+
+Codex has no per-turn dollar-cost ledger like Claude's `usageEntries` — its
+closest equivalent timeline is `readLocalTokenEvents()`, which already reads
+rollout `.jsonl` files for `token_count` events (`{ts, tokens, fiveHourLimit}`)
+over a 14-day window. `buildWeeklySpark(threads, weeklyResetEpochSec, nowSec)`
+buckets those events by hour directly (no separate `recentHourly` precompute
+step needed, since the 14-day read already covers more than one week), using
+**token volume as the pace proxy instead of dollar cost** — the wire format
+still calls the field `hourly[].cost` to keep the JSON contract identical
+across providers (the Swift view only uses it as a relative magnitude for the
+pace-color ramp, never displays units directly).
+
+`maxedHours` detection also differs: Codex doesn't emit a distinct
+rate-limit-hit record the way Claude does. Instead, each token_count event
+carries the primary (5h) rate-limit snapshot active at that moment
+(`event.fiveHourLimit.used_percent`); an hour is flagged "maxed" when a
+snapshot in it reports `used_percent >= 99`.
+
+Gated the same way as Claude: only populated when `weeklyResetEpoch` (the
+official OpenAI weekly reset, preferring `officialUsage.weekly.resetEpoch`
+then `rateLimits.secondary.resets_at`) is known — same variable that already
+feeds `secondary.endEpoch` and `buildWeeklyCycle`.

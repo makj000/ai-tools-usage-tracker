@@ -748,6 +748,48 @@ function readFiveHourResetAnchor(threads, nowSec) {
   return anchor;
 }
 
+// Codex has no per-turn dollar-cost ledger like Claude's — token_count
+// events (from readLocalTokenEvents) are the closest equivalent timeline,
+// so hourly "pace" here is token volume, not cost. maxedHours is inferred
+// from the primary (5h) rate-limit snapshot attached to each event hitting
+// ~100%, since Codex doesn't emit a distinct rate-limit-hit record the way
+// Claude does. Only returns data when a real (official) weekly reset epoch
+// is known, mirroring buildWeeklyCycle's own gating.
+function buildWeeklySpark(threads, weeklyResetEpochSec, nowSec) {
+  if (!Number.isInteger(weeklyResetEpochSec)) return null;
+  const events = readLocalTokenEvents(threads, nowSec);
+  if (!events.length) return null;
+
+  const HOUR_MS = 60 * 60 * 1000;
+  const windowEndMs = weeklyResetEpochSec * 1000;
+  const windowStartMs = Math.floor((windowEndMs - 7 * 24 * HOUR_MS) / HOUR_MS) * HOUR_MS;
+  const nowMs = nowSec * 1000;
+
+  const hourlyTokens = {};
+  for (const event of events) {
+    if (event.ts < windowStartMs || event.ts >= nowMs) continue;
+    const hourEpoch = Math.floor(event.ts / HOUR_MS) * HOUR_MS;
+    hourlyTokens[hourEpoch] = (hourlyTokens[hourEpoch] || 0) + event.tokens;
+  }
+  const hourly = [];
+  for (let t = windowStartMs; t < windowEndMs && t < nowMs; t += HOUR_MS) {
+    hourly.push({ epoch: Math.floor(t / 1000), cost: hourlyTokens[t] || 0 });
+  }
+
+  const maxedHours = [...new Set(
+    events
+      .filter((event) => event.ts >= windowStartMs && event.ts < nowMs && (event.fiveHourLimit?.used_percent ?? 0) >= 99)
+      .map((event) => Math.floor((Math.floor(event.ts / HOUR_MS) * HOUR_MS) / 1000))
+  )];
+
+  return {
+    windowStartEpoch: Math.floor(windowStartMs / 1000),
+    windowEndEpoch: weeklyResetEpochSec,
+    hourly,
+    maxedHours,
+  };
+}
+
 function buildMenubarData(daily, options = {}) {
   const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
   const dailySeries = buildRecentDailySeries(daily, WEEKLY_SERIES_DAYS, nowSec * 1000);
@@ -870,6 +912,13 @@ function buildMenubarData(daily, options = {}) {
     resetDetected: officialFiveHourResetDetected || officialWeeklyResetDetected,
   } : null;
 
+  const weeklyResetEpoch = Number.isInteger(officialUsage?.weekly?.resetEpoch)
+    ? officialUsage.weekly.resetEpoch
+    : Number.isInteger(rateLimits?.secondary?.resets_at) && rateLimits.secondary.resets_at > nowSec
+      ? rateLimits.secondary.resets_at
+      : null;
+  const weeklySpark = buildWeeklySpark(options.threads, weeklyResetEpoch, nowSec);
+
   return {
     updatedAt: new Date().toISOString(),
     title: "Codex",
@@ -898,6 +947,7 @@ function buildMenubarData(daily, options = {}) {
       isRemaining: hasOfficialWeeklyUsage ? officialUsage.weekly.isRemaining : false,
     },
     weeklyCycle: buildWeeklyCycle(todayDate, Number.isInteger(officialUsage?.weekly?.resetEpoch) ? officialUsage.weekly.resetEpoch : rateLimits?.secondary?.resets_at),
+    weeklySpark,
     modelAlert: buildModelAlert(options.threads || [], { nowSec, modelAlertRecentSec: options.modelAlertRecentSec }),
   };
 }
