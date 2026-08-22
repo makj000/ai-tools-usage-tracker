@@ -83,8 +83,8 @@ test("shows provider colors in mouseover text", () => {
   assert.match(source, /case button\(title: String, tint: NSColor\?, action: \(\) -> Void\)/);
   assert.match(source, /var rows: \[HoverRow\] = \[\.header\(sectionTitle, theme\.tint\)\]/);
   assert.match(source, /appendMenuItem\(primaryMenuItem, to: &rows, tint: theme\.tint\)/);
-  assert.match(source, /appendMenuItem\(openUsageMenuItem, to: &rows, tint: theme\.tint\)/);
-  assert.match(source, /appendMenuItem\(accuracyMenuItem, to: &rows, tint: theme\.tint\)/);
+  assert.match(source, /appendMenuItem\(openUsageMenuItem, to: &sideRows, tint: theme\.tint\)/);
+  assert.match(source, /appendMenuItem\(accuracyMenuItem, to: &sideRows, tint: theme\.tint\)/);
   assert.match(source, /HoverTextLineView\(text: text, isHeader: true, tint: tint\)/);
   assert.match(source, /HoverTextLineView\(text: text, tint: tint\)/);
   assert.match(source, /HoverButtonLineView\(title: title, tint: tint, action: action\)/);
@@ -114,9 +114,9 @@ test("renders actionable hover rows as buttons", () => {
   assert.match(source, /final class HoverButtonLineView: NSView/);
   assert.match(source, /override func mouseUp\(with event: NSEvent\)/);
   assert.match(source, /case \.button\(let title, let tint, let action\):/);
-  assert.match(source, /appendMenuItem\(openUsageMenuItem, to: &rows, tint: theme\.tint\) \{ \[weak self\] in self\?\.openUsagePage\(\) \}/);
-  assert.match(source, /appendMenuItem\(apiCreditMenuItem, to: &rows, tint: theme\.tint\) \{ \[weak self\] in self\?\.openApiCredit\(\) \}/);
-  assert.match(source, /appendMenuItem\(accuracyCheckMenuItem, to: &rows, tint: theme\.tint\) \{ \[weak target, weak self\] in target\?\.runAccuracyCheck\(for: self\) \}/);
+  assert.match(source, /appendMenuItem\(openUsageMenuItem, to: &sideRows, tint: theme\.tint\) \{ \[weak self\] in self\?\.openUsagePage\(\) \}/);
+  assert.match(source, /appendMenuItem\(apiCreditMenuItem, to: &sideRows, tint: theme\.tint\) \{ \[weak self\] in self\?\.openApiCredit\(\) \}/);
+  assert.match(source, /appendMenuItem\(accuracyCheckMenuItem, to: &sideRows, tint: theme\.tint\) \{ \[weak target, weak self\] in target\?\.runAccuracyCheck\(for: self\) \}/);
 });
 
 test("closes mouseover after leaving both the menu bar and popover", () => {
@@ -136,7 +136,16 @@ test("keeps value text in a fixed right-aligned column", () => {
   assert.match(source, /suffix\.frame = NSRect\(x: 214, y: 1, width: 122, height: 18\)/);
   assert.match(source, /NSSize\(width: 336, height: 20\)/);
   assert.match(source, /NSSize\(width: 420, height: 20\)/);
-  assert.match(source, /rows\.count \* 24 \+ 20/);
+});
+
+test("sizes the hover popover from the stack's real fitting height, not a per-row guess", () => {
+  // Regression test: a flat `rows.count * 24 + 20` estimate assumed every
+  // row was a plain ~24pt line. It silently mis-sized the popover the
+  // moment a row (like the weeklySpark chart) had a real, very different
+  // height — NSStackView redistributed the gap unevenly, leaving empty
+  // space in one row and clipped/overlapping content in another.
+  assert.match(source, /stack\.fittingSize/);
+  assert.doesNotMatch(source, /rows\.count \* 24 \+ 20/);
 });
 
 test("surfaces Codex reset detection in menu and hover rows", () => {

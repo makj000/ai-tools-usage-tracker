@@ -23,3 +23,4 @@ accuracy/.browser-profile/
 accuracy/.chrome-cdp-profile/
 restructure.md
 TOKEN_USAGE_TAB_CHECKLIST.md
+tmp/

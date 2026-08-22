@@ -708,20 +708,27 @@ final class ProviderStatusController {
     func hoverMenuRows(target: AppDelegate) -> [HoverRow] {
         var rows: [HoverRow] = [.header(sectionTitle, theme.tint)]
         appendMenuItem(primaryMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
+
+        // Everything that would otherwise stack below the chart — collected
+        // separately so it can run down the chart's left side instead,
+        // filling the space the chart itself doesn't need there.
+        var sideRows: [HoverRow] = []
+        appendMenuItem(tertiaryMenuItem, to: &sideRows, tint: theme.tint) { [weak self] in self?.openDashboard() }
+        appendMenuItem(openMenuItem, to: &sideRows, tint: theme.tint) { [weak self] in self?.openDashboard() }
+        appendMenuItem(openUsageMenuItem, to: &sideRows, tint: theme.tint) { [weak self] in self?.openUsagePage() }
+        appendMenuItem(accuracyMenuItem, to: &sideRows, tint: theme.tint)
+        appendMenuItem(accuracyCheckMenuItem, to: &sideRows, tint: theme.tint) { [weak target, weak self] in target?.runAccuracyCheck(for: self) }
+        appendMenuItem(extraCreditMenuItem, to: &sideRows, tint: theme.tint)
+        appendMenuItem(usageCreditsMenuItem, to: &sideRows, tint: theme.tint) { [weak self] in self?.openUsageCredits() }
+        appendMenuItem(modelAlertMenuItem, to: &sideRows, tint: NSColor.systemRed)
+        appendMenuItem(apiCreditMenuItem, to: &sideRows, tint: theme.tint) { [weak self] in self?.openApiCredit() }
+
         if let sparkModel = weeklySparkModel() {
-            rows.append(.weeklySpark(sparkModel))
+            rows.append(.weeklySparkWithSide(sparkModel, sideRows))
         } else {
             appendMenuItem(secondaryMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
+            rows.append(contentsOf: sideRows)
         }
-        appendMenuItem(tertiaryMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
-        appendMenuItem(openMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openDashboard() }
-        appendMenuItem(openUsageMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openUsagePage() }
-        appendMenuItem(accuracyMenuItem, to: &rows, tint: theme.tint)
-        appendMenuItem(accuracyCheckMenuItem, to: &rows, tint: theme.tint) { [weak target, weak self] in target?.runAccuracyCheck(for: self) }
-        appendMenuItem(extraCreditMenuItem, to: &rows, tint: theme.tint)
-        appendMenuItem(usageCreditsMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openUsageCredits() }
-        appendMenuItem(modelAlertMenuItem, to: &rows, tint: NSColor.systemRed)
-        appendMenuItem(apiCreditMenuItem, to: &rows, tint: theme.tint) { [weak self] in self?.openApiCredit() }
         return rows
     }
 
@@ -997,7 +1004,10 @@ enum HoverRow {
     case button(title: String, tint: NSColor?, action: () -> Void)
     case metric(HoverMetricRow)
     case slider(label: String, value: Double, minValue: Double, maxValue: Double, onChange: (CGFloat) -> Void)
-    case weeklySpark(WeeklySparkModel)
+    // The chart paired with the rows that would otherwise stack below it —
+    // rendered side by side so those rows fill the space the chart doesn't
+    // use on its left, instead of leaving it blank.
+    case weeklySparkWithSide(WeeklySparkModel, [HoverRow])
     case separator
 }
 
@@ -1190,8 +1200,12 @@ final class HoverButtonLineView: NSView {
 // projection) happens here from raw hourly costs, not in build.js, so a
 // stale JSON snapshot never freezes a stale "now" position on screen.
 final class WeeklySparkView: NSView {
-    static let contentWidth: CGFloat = 420
-    static let totalHeight: CGFloat = 134
+    // Just the chart + its caption now — the menu-style rows that used to
+    // stack below it live in a sibling view to the left instead (see
+    // .weeklySparkWithSide in UsageHoverViewController), so there's no
+    // internal left/right split here anymore.
+    static let contentWidth: CGFloat = 380
+    static let totalHeight: CGFloat = 156
 
     private let model: WeeklySparkModel
 
@@ -1206,9 +1220,19 @@ final class WeeklySparkView: NSView {
 
     override var isFlipped: Bool { true }
 
+    // Explicit, like HoverSeparatorView — a bare custom NSView with no
+    // subviews has no natural size for NSStackView to infer, and relying on
+    // the frame-translated-into-constraints behavior alone let the stack
+    // size this row far too short, overlapping the rows that followed it.
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: Self.contentWidth, height: Self.totalHeight)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        let W = bounds.width
-        let idleColor = NSColor(calibratedWhite: 0.49, alpha: 1)
+        // Dynamic system colors throughout (not fixed dark/light values) — the
+        // popover follows the OS appearance, so a hardcoded dark-chrome
+        // palette would wash out under a light appearance.
+        let idleColor = NSColor.secondaryLabelColor
         let rateStops: [NSColor] = [
             NSColor(calibratedRed: 0.965, green: 0.788, blue: 0.627, alpha: 1),
             NSColor(calibratedRed: 0.941, green: 0.658, blue: 0.4, alpha: 1),
@@ -1220,23 +1244,22 @@ final class WeeklySparkView: NSView {
         let restFill = NSColor(calibratedRed: 0.47, green: 0.55, blue: 0.667, alpha: 0.10)
         let restStroke = NSColor(calibratedRed: 0.47, green: 0.55, blue: 0.667, alpha: 0.4)
 
+        let chartX0: CGFloat = 0
+        let chartW = bounds.width
+
         let totalWeekHours = max((model.windowEndEpoch - model.windowStartEpoch) / 3600.0, 1)
         func hourOffset(_ epoch: Double) -> CGFloat { CGFloat((epoch - model.windowStartEpoch) / 3600.0) }
-        func x(_ hours: CGFloat) -> CGFloat { max(0, min(W, (hours / CGFloat(totalWeekHours)) * W)) }
+        func x(_ hours: CGFloat) -> CGFloat { chartX0 + max(0, min(chartW, (hours / CGFloat(totalWeekHours)) * chartW)) }
 
         // ---- Layout ----
-        let headlineY: CGFloat = 0
-        let subY: CGFloat = 16
-        let chartTop: CGFloat = 30
         let chartPadTop: CGFloat = 3
         let chartH: CGFloat = 52
-        let lineTopY = chartTop + chartPadTop
+        let lineTopY = chartPadTop
         let lineBottomY = lineTopY + chartH
         func y(_ pct: CGFloat) -> CGFloat { lineTopY + (1 - max(0, min(1, pct))) * chartH }
         let stripY = lineBottomY + 4
         let stripH: CGFloat = 9
         let axisBaselineY = stripY + stripH + 4 + 8
-        let legendY = chartTop + chartPadTop + chartH + 4 + stripH + 4 + 11 + 5
 
         // ---- Headline: whichever finishes first, exhaustion or reset ----
         let flat = model.hourly.map { max(0, $0.cost) }
@@ -1288,16 +1311,22 @@ final class WeeklySparkView: NSView {
             ? "at this pace, ~\(fmtClock(exhaustEpoch)) · resets \(fmtClock(model.windowEndEpoch))"
             : "\(fmtClock(model.windowEndEpoch)) · at this pace you won't hit the ceiling first"
 
-        drawText(headlineText, x: 0, y: headlineY, width: W, font: .boldSystemFont(ofSize: 12), color: headlineColor)
-        drawText(subText, x: 0, y: subY, width: W, font: .systemFont(ofSize: 9.5), color: NSColor(calibratedWhite: 0.55, alpha: 1))
+        // Caption block sits under the graph (right column), not on the left —
+        // it's about the chart, so it stays visually grouped with it instead
+        // of crowding the left-hand list of menu-style rows above/below it.
+        let captionY0 = axisBaselineY + 6
+        let captionY1 = captionY0 + 22
+        let captionY2 = captionY1 + 28
+        drawText(headlineText, x: chartX0, y: captionY0, width: chartW, height: 22, font: .boldSystemFont(ofSize: 12), color: headlineColor)
+        drawText(subText, x: chartX0, y: captionY1, width: chartW, height: 28, font: .systemFont(ofSize: 9.5), color: .secondaryLabelColor)
 
         guard nowIdx > 0 else {
-            drawText("No usage recorded yet this week", x: 0, y: chartTop + 20, width: W, font: .systemFont(ofSize: 10.5), color: NSColor(calibratedWhite: 0.55, alpha: 1))
+            drawText("No usage recorded yet this week", x: chartX0, y: captionY0, width: chartW, height: 28, font: .systemFont(ofSize: 10.5), color: .secondaryLabelColor)
             return
         }
 
         // ---- Day gridlines (orientation only — never the source of the countdown) ----
-        let gridColor = NSColor(calibratedWhite: 1, alpha: 0.08)
+        let gridColor = NSColor.separatorColor.withAlphaComponent(0.6)
         var day: CGFloat = 0
         while day < CGFloat(totalWeekHours) {
             let gx = x(day)
@@ -1310,11 +1339,11 @@ final class WeeklySparkView: NSView {
             day += 24
         }
         let ceilingLine = NSBezierPath()
-        ceilingLine.move(to: NSPoint(x: 0, y: y(1)))
-        ceilingLine.line(to: NSPoint(x: W, y: y(1)))
+        ceilingLine.move(to: NSPoint(x: chartX0, y: y(1)))
+        ceilingLine.line(to: NSPoint(x: chartX0 + chartW, y: y(1)))
         ceilingLine.lineWidth = 1
         setDashed(ceilingLine, [2, 2])
-        NSColor(calibratedWhite: 1, alpha: 0.14).setStroke()
+        NSColor.separatorColor.setStroke()
         ceilingLine.stroke()
 
         // ---- Idle-run rest bands (>=4 consecutive zero-cost hours) ----
@@ -1341,7 +1370,7 @@ final class WeeklySparkView: NSView {
         }
 
         // ---- Cumulative line: colored runs by pace, gray when idle ----
-        var points: [NSPoint] = [NSPoint(x: 0, y: y(0))]
+        var points: [NSPoint] = [NSPoint(x: chartX0, y: y(0))]
         for i in 0..<nowIdx { points.append(NSPoint(x: x(hourOffsets[i]), y: y(cum[i]))) }
         let maxRate = max(flat.max() ?? 0, 0.0001)
         func rateColor(_ v: Double) -> NSColor {
@@ -1353,7 +1382,7 @@ final class WeeklySparkView: NSView {
 
         // Area fill under the full cumulative shape.
         let area = NSBezierPath()
-        area.move(to: NSPoint(x: 0, y: y(0)))
+        area.move(to: NSPoint(x: chartX0, y: y(0)))
         for p in points.dropFirst() { area.line(to: p) }
         area.line(to: NSPoint(x: points.last!.x, y: y(0)))
         area.close()
@@ -1396,9 +1425,9 @@ final class WeeklySparkView: NSView {
         }
 
         // ---- Activity strip: one cell per elapsed hour, lit when active ----
-        NSColor(calibratedWhite: 1, alpha: 0.05).setFill()
-        NSBezierPath(roundedRect: NSRect(x: 0, y: stripY, width: x(hourOffsets.last ?? 0), height: stripH), xRadius: 2, yRadius: 2).fill()
-        let cellW = max(W / CGFloat(totalWeekHours) - 0.4, 0.6)
+        NSColor.separatorColor.withAlphaComponent(0.3).setFill()
+        NSBezierPath(roundedRect: NSRect(x: chartX0, y: stripY, width: x(hourOffsets.last ?? 0) - chartX0, height: stripH), xRadius: 2, yRadius: 2).fill()
+        let cellW = max(chartW / CGFloat(totalWeekHours) - 0.4, 0.6)
         for i in 0..<nowIdx where flat[i] > 0 {
             let cx = x(hourOffsets[i])
             model.tint.withAlphaComponent(min(0.4 + CGFloat(flat[i]) / 20, 1)).setFill()
@@ -1409,7 +1438,7 @@ final class WeeklySparkView: NSView {
         let nowX = x(nowHourOffset)
         let nowY = y(cum[nowIdx - 1])
         if hoursToExhaustion.isFinite {
-            let exhaustX = min(nowX + (hoursToExhaustion / CGFloat(totalWeekHours)) * W, W - 1)
+            let exhaustX = min(nowX + (hoursToExhaustion / CGFloat(totalWeekHours)) * chartW, chartX0 + chartW - 1)
             let proj = NSBezierPath()
             proj.move(to: NSPoint(x: nowX, y: nowY))
             proj.line(to: NSPoint(x: exhaustX, y: y(1)))
@@ -1425,8 +1454,8 @@ final class WeeklySparkView: NSView {
 
         // ---- Reset marker: real epoch, independent of the day gridlines ----
         let resetLine = NSBezierPath()
-        resetLine.move(to: NSPoint(x: W - 0.5, y: lineTopY))
-        resetLine.line(to: NSPoint(x: W - 0.5, y: stripY + stripH))
+        resetLine.move(to: NSPoint(x: chartX0 + chartW - 0.5, y: lineTopY))
+        resetLine.line(to: NSPoint(x: chartX0 + chartW - 0.5, y: stripY + stripH))
         resetLine.lineWidth = 1.5
         resetColor.setStroke()
         resetLine.stroke()
@@ -1444,21 +1473,25 @@ final class WeeklySparkView: NSView {
             let epoch = model.windowStartEpoch + Double(day) * 3600
             let label = weekdayFmt.string(from: Date(timeIntervalSince1970: epoch))
             let isToday = Calendar.current.isDateInToday(Date(timeIntervalSince1970: epoch))
-            drawText(label, x: x(day) + 2, y: axisBaselineY - 8, width: 40, font: .systemFont(ofSize: 8.5), color: isToday ? model.tint : NSColor(calibratedWhite: 0.44, alpha: 1))
+            drawText(label, x: x(day) + 2, y: axisBaselineY - 8, width: 40, font: .systemFont(ofSize: 8.5), color: isToday ? model.tint : .tertiaryLabelColor)
             day += 24
         }
 
-        // ---- Mini legend ----
-        drawText("● pace  ● no usage  ○ 5h maxed  ▮ reset", x: 0, y: legendY, width: W, font: .systemFont(ofSize: 8.5), color: NSColor(calibratedWhite: 0.5, alpha: 1))
+        // ---- Mini legend: last line of the caption block under the graph ----
+        drawText(
+            "● pace    ● no usage    ○ 5h maxed    ▮ reset",
+            x: chartX0, y: captionY2, width: chartW,
+            font: .systemFont(ofSize: 8.5), color: .tertiaryLabelColor
+        )
     }
 
     private func setDashed(_ path: NSBezierPath, _ pattern: [CGFloat]) {
         path.setLineDash(pattern, count: pattern.count, phase: 0)
     }
 
-    private func drawText(_ text: String, x: CGFloat, y: CGFloat, width: CGFloat, font: NSFont, color: NSColor) {
+    private func drawText(_ text: String, x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat? = nil, font: NSFont, color: NSColor) {
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
-        NSAttributedString(string: text, attributes: attrs).draw(in: NSRect(x: x, y: y, width: width, height: font.pointSize + 4))
+        NSAttributedString(string: text, attributes: attrs).draw(in: NSRect(x: x, y: y, width: width, height: height ?? (font.pointSize + 4)))
     }
 }
 
@@ -1508,25 +1541,52 @@ final class UsageHoverViewController: NSViewController {
                 stack.addArrangedSubview(HoverMetricLineView(row: row))
             case .slider(let label, let value, let minValue, let maxValue, let onChange):
                 stack.addArrangedSubview(HoverSliderLineView(label: label, value: value, minValue: minValue, maxValue: maxValue, onChange: onChange))
-            case .weeklySpark(let model):
-                stack.addArrangedSubview(WeeklySparkView(model: model))
+            case .weeklySparkWithSide(let model, let sideRows):
+                let sideStack = NSStackView()
+                sideStack.orientation = .vertical
+                sideStack.alignment = .leading
+                sideStack.spacing = 6
+                for sideRow in sideRows {
+                    switch sideRow {
+                    case .text(let text, let tint):
+                        sideStack.addArrangedSubview(HoverTextLineView(text: text, tint: tint))
+                    case .button(let title, let tint, let action):
+                        sideStack.addArrangedSubview(HoverButtonLineView(title: title, tint: tint, action: action))
+                    default:
+                        break // sideRows only ever contains .text/.button (built from appendMenuItem)
+                    }
+                }
+                let rowStack = NSStackView(views: [sideStack, WeeklySparkView(model: model)])
+                rowStack.orientation = .horizontal
+                rowStack.alignment = .top
+                rowStack.spacing = 24
+                stack.addArrangedSubview(rowStack)
             case .separator:
                 stack.addArrangedSubview(HoverSeparatorView(frame: NSRect(x: 0, y: 0, width: 420, height: 1)))
             }
         }
 
-        // Base formula assumes every row is a plain ~24pt text/metric line;
-        // a weeklySpark row is much taller, so add its real height on top of
-        // the 24pt it already contributed to the base estimate.
-        let sparkExtra = rows.reduce(CGFloat(0)) { sum, row in
-            if case .weeklySpark = row { return sum + (WeeklySparkView.totalHeight - 24) }
-            return sum
-        }
-        let height = max(38, rows.count * 24 + 20) + Int(sparkExtra)
-        let container = HoverTrackingView(frame: NSRect(x: 0, y: 0, width: 444, height: height))
+        // A flat per-row height estimate was fine while every row was a
+        // plain ~24pt text/metric line, but it silently mis-sizes the moment
+        // one row (like weeklySpark) has a real, very different height —
+        // NSStackView then redistributes the gap unevenly across rows
+        // (empty space in one, clipped overlap in another). Ask the stack
+        // for its own true fitting size instead of estimating.
+        stack.layoutSubtreeIfNeeded()
+        let fittingHeight = stack.fittingSize.height
+        let height = max(38, Int(fittingHeight.rounded(.up)))
+        // Wider than the plain-row content column (420pt) specifically to give
+        // the weeklySpark row's left-text/right-chart split enough room —
+        // other rows just stay left-aligned in the extra space.
+        // 420 (side list, matching the plain rows' own width) + 24 (gap) +
+        // 380 (chart) + 24 (edge insets) — wide enough for weeklySparkWithSide
+        // to lay its side list and chart next to each other without either
+        // being squeezed.
+        let popoverWidth: CGFloat = 860
+        let container = HoverTrackingView(frame: NSRect(x: 0, y: 0, width: popoverWidth, height: CGFloat(height)))
         container.onMouseEntered = onMouseEntered
         container.onMouseExited = onMouseExited
-        stack.frame = container.bounds
+        stack.frame = NSRect(x: 0, y: 0, width: popoverWidth, height: CGFloat(height))
         container.addSubview(stack)
         view = container
     }
